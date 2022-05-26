@@ -180,12 +180,12 @@ class CustomDataset(Dataset):
 
         xyz, rgb, semantic_label, instance_label = data
 
-        if self.limit_anno:
+        if self.limit_anno and self.training:
             points_idx = self.limit_points_dict[scan_id]
-            mask_invalid = torch.ones_like(semantic_label, dtype=torch.bool)
+            mask_invalid = np.ones_like(semantic_label, dtype=bool)
             mask_invalid[points_idx] = False
-            semantic_label[mask_invalid] = -1
-            instance_label[mask_invalid] = -1
+            semantic_label[mask_invalid] = -100
+            instance_label[mask_invalid] = -100
 
             # semantic_label[points_idx] = -1
         data = self.transform_train(xyz, rgb, semantic_label, instance_label) if self.training else self.transform_test(xyz, rgb, semantic_label, instance_label)
@@ -205,6 +205,7 @@ class CustomDataset(Dataset):
 
         instance_label, inst_num, inst_pointnum, inst_cls, pt_offset_label = None, None, None, None, None
 
+        # print('debug label', torch.count_nonzero(semantic_label != -1))
         return (scan_id, coord, coord_float, feat, semantic_label, instance_label, inst_num,
                 inst_pointnum, inst_cls, pt_offset_label)
 

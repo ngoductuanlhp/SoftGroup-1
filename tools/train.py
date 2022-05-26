@@ -25,7 +25,7 @@ def get_args():
     parser.add_argument('config', type=str, help='path to config file')
     parser.add_argument('--dist', action='store_true', help='run with distributed parallel')
     parser.add_argument('--resume', type=str, help='path to resume from')
-    parser.add_argument('--work_dir', type=str, help='working directory', default='work_dirs')
+    parser.add_argument('--work_dir', type=str, help='working directory')
     parser.add_argument('--skip_validate', action='store_true', help='skip validation')
     parser.add_argument("--local_rank", type=int, default=0)
     args = parser.parse_args()

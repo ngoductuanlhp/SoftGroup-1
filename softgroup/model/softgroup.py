@@ -107,8 +107,11 @@ class SoftGroup(nn.Module):
 
     def point_wise_loss(self, semantic_scores, semantic_labels):
         losses = {}
-        semantic_loss = F.cross_entropy(
-            semantic_scores, semantic_labels, ignore_index=self.ignore_label)
+        if torch.sum(semantic_labels!=-1) == 0:
+            semantic_loss = torch.Tensor(0, requires_grad=True)
+        else:
+            semantic_loss = F.cross_entropy(
+                semantic_scores, semantic_labels, ignore_index=self.ignore_label)
         losses['semantic_loss'] = semantic_loss
 
         # pos_inds = instance_labels != self.ignore_label
