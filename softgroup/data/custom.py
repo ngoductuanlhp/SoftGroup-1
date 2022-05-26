@@ -169,16 +169,19 @@ class CustomDataset(Dataset):
         if data is None:
             return None
         xyz, xyz_middle, rgb, semantic_label, instance_label = data
-        info = self.getInstanceInfo(xyz_middle, instance_label.astype(np.int32), semantic_label)
-        inst_num, inst_pointnum, inst_cls, pt_offset_label = info
+        # info = self.getInstanceInfo(xyz_middle, instance_label.astype(np.int32), semantic_label)
+        # inst_num, inst_pointnum, inst_cls, pt_offset_label = info
         coord = torch.from_numpy(xyz).long()
         coord_float = torch.from_numpy(xyz_middle)
         feat = torch.from_numpy(rgb).float()
         if self.training:
             feat += torch.randn(3) * 0.1
         semantic_label = torch.from_numpy(semantic_label)
-        instance_label = torch.from_numpy(instance_label)
-        pt_offset_label = torch.from_numpy(pt_offset_label)
+        # instance_label = torch.from_numpy(instance_label)
+        # pt_offset_label = torch.from_numpy(pt_offset_label)
+
+        instance_label, inst_num, inst_pointnum, inst_cls, pt_offset_label = None, None, None, None, None
+
         return (scan_id, coord, coord_float, feat, semantic_label, instance_label, inst_num,
                 inst_pointnum, inst_cls, pt_offset_label)
 
@@ -188,11 +191,11 @@ class CustomDataset(Dataset):
         coords_float = []
         feats = []
         semantic_labels = []
-        instance_labels = []
+        # instance_labels = []
 
-        instance_pointnum = []  # (total_nInst), int
-        instance_cls = []  # (total_nInst), long
-        pt_offset_labels = []
+        # instance_pointnum = []  # (total_nInst), int
+        # instance_cls = []  # (total_nInst), long
+        # pt_offset_labels = []
 
         total_inst_num = 0
         batch_id = 0
@@ -201,17 +204,17 @@ class CustomDataset(Dataset):
                 continue
             (scan_id, coord, coord_float, feat, semantic_label, instance_label, inst_num,
              inst_pointnum, inst_cls, pt_offset_label) = data
-            instance_label[np.where(instance_label != -100)] += total_inst_num
-            total_inst_num += inst_num
+            # instance_label[np.where(instance_label != -100)] += total_inst_num
+            # total_inst_num += inst_num
             scan_ids.append(scan_id)
             coords.append(torch.cat([coord.new_full((coord.size(0), 1), batch_id), coord], 1))
             coords_float.append(coord_float)
             feats.append(feat)
             semantic_labels.append(semantic_label)
-            instance_labels.append(instance_label)
-            instance_pointnum.extend(inst_pointnum)
-            instance_cls.extend(inst_cls)
-            pt_offset_labels.append(pt_offset_label)
+            # instance_labels.append(instance_label)
+            # instance_pointnum.extend(inst_pointnum)
+            # instance_cls.extend(inst_cls)
+            # pt_offset_labels.append(pt_offset_label)
             batch_id += 1
         assert batch_id > 0, 'empty batch'
         if batch_id < len(batch):
@@ -223,10 +226,13 @@ class CustomDataset(Dataset):
         coords_float = torch.cat(coords_float, 0).to(torch.float32)  # float (N, 3)
         feats = torch.cat(feats, 0)  # float (N, C)
         semantic_labels = torch.cat(semantic_labels, 0).long()  # long (N)
-        instance_labels = torch.cat(instance_labels, 0).long()  # long (N)
-        instance_pointnum = torch.tensor(instance_pointnum, dtype=torch.int)  # int (total_nInst)
-        instance_cls = torch.tensor(instance_cls, dtype=torch.long)  # long (total_nInst)
-        pt_offset_labels = torch.cat(pt_offset_labels).float()
+
+        # instance_labels = torch.cat(instance_labels, 0).long()  # long (N)
+        # instance_pointnum = torch.tensor(instance_pointnum, dtype=torch.int)  # int (total_nInst)
+        # instance_cls = torch.tensor(instance_cls, dtype=torch.long)  # long (total_nInst)
+        # pt_offset_labels = torch.cat(pt_offset_labels).float()
+
+        instance_labels, instance_pointnum, instance_cls,pt_offset_labels = None, None, None, None
 
         spatial_shape = np.clip(
             coords.max(0)[0][1:].numpy() + 1, self.voxel_cfg.spatial_shape[0], None)

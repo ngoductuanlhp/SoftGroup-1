@@ -25,8 +25,9 @@ def get_args():
     parser.add_argument('config', type=str, help='path to config file')
     parser.add_argument('--dist', action='store_true', help='run with distributed parallel')
     parser.add_argument('--resume', type=str, help='path to resume from')
-    parser.add_argument('--work_dir', type=str, help='working directory')
+    parser.add_argument('--work_dir', type=str, help='working directory', default='work_dirs')
     parser.add_argument('--skip_validate', action='store_true', help='skip validation')
+    parser.add_argument("--local_rank", type=int, default=0)
     args = parser.parse_args()
     return args
 
@@ -80,7 +81,7 @@ def train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer):
     checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq)
 
 
-def validate(epoch, model, val_loader, cfg, logger, writer):
+def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
     logger.info('Validation')
     results = []
     all_sem_preds, all_sem_labels, all_offset_preds, all_offset_labels = [], [], [], []
@@ -100,27 +101,32 @@ def validate(epoch, model, val_loader, cfg, logger, writer):
         for res in results:
             all_sem_preds.append(res['semantic_preds'])
             all_sem_labels.append(res['semantic_labels'])
-            all_offset_preds.append(res['offset_preds'])
-            all_offset_labels.append(res['offset_labels'])
-            all_inst_labels.append(res['instance_labels'])
-            if not cfg.model.semantic_only:
-                all_pred_insts.append(res['pred_instances'])
-                all_gt_insts.append(res['gt_instances'])
-        if not cfg.model.semantic_only:
-            logger.info('Evaluate instance segmentation')
-            scannet_eval = ScanNetEval(val_set.CLASSES)
-            eval_res = scannet_eval.evaluate(all_pred_insts, all_gt_insts)
-            writer.add_scalar('val/AP', eval_res['all_ap'], epoch)
-            writer.add_scalar('val/AP_50', eval_res['all_ap_50%'], epoch)
-            writer.add_scalar('val/AP_25', eval_res['all_ap_25%'], epoch)
-        logger.info('Evaluate semantic segmentation and offset MAE')
+            # all_offset_preds.append(res['offset_preds'])
+            # all_offset_labels.append(res['offset_labels'])
+            # all_inst_labels.append(res['instance_labels'])
+            # if not cfg.model.semantic_only:
+            #     all_pred_insts.append(res['pred_instances'])
+            #     all_gt_insts.append(res['gt_instances'])
+        # if not cfg.model.semantic_only:
+        #     logger.info('Evaluate instance segmentation')
+        #     scannet_eval = ScanNetEval(val_set.CLASSES)
+        #     eval_res = scannet_eval.evaluate(all_pred_insts, all_gt_insts)
+        #     writer.add_scalar('val/AP', eval_res['all_ap'], epoch)
+        #     writer.add_scalar('val/AP_50', eval_res['all_ap_50%'], epoch)
+        #     writer.add_scalar('val/AP_25', eval_res['all_ap_25%'], epoch)
+        # logger.info('Evaluate semantic segmentation and offset MAE')
         miou = evaluate_semantic_miou(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
         acc = evaluate_semantic_acc(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
-        mae = evaluate_offset_mae(all_offset_preds, all_offset_labels, all_inst_labels,
-                                  cfg.model.ignore_label, logger)
+        # mae = evaluate_offset_mae(all_offset_preds, all_offset_labels, all_inst_labels,
+        #                           cfg.model.ignore_label, logger)
         writer.add_scalar('val/mIoU', miou, epoch)
         writer.add_scalar('val/Acc', acc, epoch)
-        writer.add_scalar('val/Offset MAE', mae, epoch)
+        # writer.add_scalar('val/Offset MAE', mae, epoch)
+        
+        global best_miou
+        if best_miou < miou:
+            best_miou = miou
+            checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq, best=True)
 
 
 def main():
@@ -171,13 +177,18 @@ def main():
     elif cfg.pretrain:
         logger.info(f'Load pretrain from {cfg.pretrain}')
         load_checkpoint(cfg.pretrain, logger, model)
+    else:
+        logger.info('Train from scratch')
 
     # train and val
     logger.info('Training')
+
+    global best_miou
+    best_miou = 0
     for epoch in range(start_epoch, cfg.epochs + 1):
         train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer)
         if not args.skip_validate and (is_multiple(epoch, cfg.save_freq) or is_power2(epoch)):
-            validate(epoch, model, val_loader, cfg, logger, writer)
+            validate(epoch, model, optimizer,val_loader, cfg, logger, writer)
         writer.flush()
 
 
