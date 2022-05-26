@@ -22,7 +22,9 @@ class CustomDataset(Dataset):
                  voxel_cfg=None,
                  training=True,
                  repeat=1,
-                 logger=None):
+                 logger=None,
+                 limit_anno=False,
+                 limit_type=None):
         self.data_root = data_root
         self.prefix = prefix
         self.suffix = suffix
@@ -32,6 +34,12 @@ class CustomDataset(Dataset):
         self.logger = logger
         self.mode = 'train' if training else 'test'
         self.filenames = self.get_filenames()
+
+        self.limit_anno = limit_anno
+        self.limit_type = limit_type
+        if self.limit_anno:
+            self.limit_points_dict = torch.load(osp.join(self.data_root, 'points', self.limit_type))
+
         self.logger.info(f'Load {self.mode} dataset: {len(self.filenames)} scans')
 
     def get_filenames(self):
@@ -150,25 +158,40 @@ class CustomDataset(Dataset):
         xyz_middle = xyz_middle[valid_idxs]
         rgb = rgb[valid_idxs]
         semantic_label = semantic_label[valid_idxs]
-        instance_label = self.getCroppedInstLabel(instance_label, valid_idxs)
-        return xyz, xyz_middle, rgb, semantic_label, instance_label
+
+        return xyz, xyz_middle, rgb, semantic_label
+        # instance_label = self.getCroppedInstLabel(instance_label, valid_idxs)
+        # return xyz, xyz_middle, rgb, semantic_label, instance_label
 
     def transform_test(self, xyz, rgb, semantic_label, instance_label):
         xyz_middle = self.dataAugment(xyz, False, False, False)
         xyz = xyz_middle * self.voxel_cfg.scale
         xyz -= xyz.min(0)
         valid_idxs = np.ones(xyz.shape[0], dtype=bool)
-        instance_label = self.getCroppedInstLabel(instance_label, valid_idxs)
-        return xyz, xyz_middle, rgb, semantic_label, instance_label
+
+        return xyz, xyz_middle, rgb, semantic_label
+        # instance_label = self.getCroppedInstLabel(instance_label, valid_idxs)
+        # return xyz, xyz_middle, rgb, semantic_label, instance_label
 
     def __getitem__(self, index):
         filename = self.filenames[index]
         scan_id = osp.basename(filename).replace(self.suffix, '')
         data = self.load(filename)
-        data = self.transform_train(*data) if self.training else self.transform_test(*data)
+
+        xyz, rgb, semantic_label, instance_label = data
+
+        if self.limit_anno:
+            points_idx = self.limit_points_dict[scan_id]
+            mask_invalid = torch.ones_like(semantic_label, dtype=torch.bool)
+            mask_invalid[points_idx] = False
+            semantic_label[mask_invalid] = -1
+            instance_label[mask_invalid] = -1
+
+            # semantic_label[points_idx] = -1
+        data = self.transform_train(xyz, rgb, semantic_label, instance_label) if self.training else self.transform_test(xyz, rgb, semantic_label, instance_label)
         if data is None:
             return None
-        xyz, xyz_middle, rgb, semantic_label, instance_label = data
+        xyz, xyz_middle, rgb, semantic_label = data
         # info = self.getInstanceInfo(xyz_middle, instance_label.astype(np.int32), semantic_label)
         # inst_num, inst_pointnum, inst_cls, pt_offset_label = info
         coord = torch.from_numpy(xyz).long()
