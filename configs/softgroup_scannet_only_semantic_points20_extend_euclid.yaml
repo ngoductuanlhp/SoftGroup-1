@@ -47,7 +47,7 @@ data:
 
     limit_anno: True
     limit_type: 'points20'
-    extend_by_euclidean: False
+    extend_by_euclidean: True
   test:
     type: 'scannetv2'
     data_root: 'dataset/scannetv2'
@@ -62,8 +62,8 @@ data:
 
 dataloader:
   train:
-    batch_size: 4
-    num_workers: 4
+    batch_size: 6
+    num_workers: 6
   test:
     batch_size: 1
     num_workers: 1

@@ -24,7 +24,8 @@ class CustomDataset(Dataset):
                  repeat=1,
                  logger=None,
                  limit_anno=False,
-                 limit_type=None):
+                 limit_type=None,
+                 extend_by_euclidean=False):
         self.data_root = data_root
         self.prefix = prefix
         self.suffix = suffix
@@ -37,6 +38,7 @@ class CustomDataset(Dataset):
 
         self.limit_anno = limit_anno
         self.limit_type = limit_type
+        self.extend_by_euclidean = extend_by_euclidean
         if self.limit_anno:
             self.limit_points_dict = torch.load(osp.join(self.data_root, 'points', self.limit_type))
 
@@ -183,6 +185,30 @@ class CustomDataset(Dataset):
         if self.limit_anno and self.training:
             points_idx = self.limit_points_dict[scan_id]
             mask_invalid = np.ones_like(semantic_label, dtype=bool)
+
+            if self.extend_by_euclidean:
+                extend_idx = []
+                pivots_xyz = xyz[points_idx, :]
+
+                distance = np.sqrt(np.sum((pivots_xyz[:, None, :] - xyz[None, :, :])**2, axis=-1)) # N_pivot, N
+
+                for p_i in range(pivots_xyz.shape[0]):
+                    distance_to_pivot = distance[p_i, :] # N
+
+                    inds = np.nonzero(distance_to_pivot < 0.2)[0]
+
+                    pivot_label = semantic_label[points_idx[p_i]]
+                    semantic_label[inds] = pivot_label
+
+                    # print(inds.shape)
+                    extend_idx.append(inds)
+
+                extend_idx = np.concatenate(extend_idx, axis=-1)
+                # points_idx.extend(extend_idx)
+                points_idx = np.concatenate([points_idx, extend_idx])
+                # print(points_idx, extend_idx)
+                points_idx = np.unique(points_idx)
+
             mask_invalid[points_idx] = False
             semantic_label[mask_invalid] = -100
             instance_label[mask_invalid] = -100
@@ -205,7 +231,7 @@ class CustomDataset(Dataset):
 
         instance_label, inst_num, inst_pointnum, inst_cls, pt_offset_label = None, None, None, None, None
 
-        # print('debug label', torch.count_nonzero(semantic_label != -1))
+        # print('debug label', torch.count_nonzero(semantic_label != -100))
         return (scan_id, coord, coord_float, feat, semantic_label, instance_label, inst_num,
                 inst_pointnum, inst_cls, pt_offset_label)
 
