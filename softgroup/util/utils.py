@@ -89,16 +89,21 @@ def weights_to_cpu(state_dict):
 def checkpoint_save(epoch, model, optimizer, work_dir, save_freq=16, best=False):
     if hasattr(model, 'module'):
         model = model.module
+
+    if best:
+        checkpoint = {
+            'net': weights_to_cpu(model.state_dict()),
+            'epoch': epoch
+        }
+        torch.save(checkpoint, f'{work_dir}/best.pth')
+        return
+
     f = os.path.join(work_dir, f'epoch_{epoch}.pth')
     checkpoint = {
         'net': weights_to_cpu(model.state_dict()),
         'optimizer': optimizer.state_dict(),
         'epoch': epoch
     }
-
-    if best:
-        torch.save(checkpoint, f'{work_dir}/best.pth')
-        return
 
     torch.save(checkpoint, f)
     if os.path.exists(f'{work_dir}/latest.pth'):
