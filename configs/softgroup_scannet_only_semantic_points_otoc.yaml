@@ -77,10 +77,9 @@ save_cfg:
   offset: True
   instance: True
 
-fp16: True
+fp16: False
 epochs: 128
 step_epoch: 50
 save_freq: 8
-# pretrain: './hais_ckpt_spconv2.pth'
 pretrain: False
 work_dir: ''
