@@ -46,7 +46,7 @@ data:
       min_npoint: 5000
 
     limit_anno: True
-    limit_type: 'points_otoc'
+    limit_type: 'points_otoc2'
     extend_by_euclidean: False
   test:
     type: 'scannetv2'
@@ -77,10 +77,10 @@ save_cfg:
   offset: True
   instance: True
 
-fp16: False
+fp16: True
 epochs: 128
 step_epoch: 50
-save_freq: 4
+save_freq: 8
 # pretrain: './hais_ckpt_spconv2.pth'
 pretrain: False
 work_dir: ''

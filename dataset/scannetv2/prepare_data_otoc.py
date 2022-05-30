@@ -66,7 +66,7 @@ def f(fn):
     name=fn.split('/')[-1]
 
     name = name[:12]
-    if os.path.exists(f'/home/ubuntu/fewshot3d_ws/SoftGroup/dataset/scannetv2/points/points_otoc/{name}'):
+    if os.path.exists(f'/home/ubuntu/fewshot3d_ws/SoftGroup/dataset/scannetv2/points/points_otoc_dir/{name}'):
        return None, None
 
     fn2 = fn[:-3] + 'labels.ply'
@@ -132,7 +132,7 @@ def f(fn):
 
     otoc_dict = {}
     otoc_dict[name] = np.where(sem_labels!=-100)[0]
-    torch.save(otoc_dict, f'/home/ubuntu/fewshot3d_ws/SoftGroup/dataset/scannetv2/points/points_otoc/{name}')
+    torch.save(otoc_dict, f'/home/ubuntu/fewshot3d_ws/SoftGroup/dataset/scannetv2/points/points_otoc_dir/{name}')
 
     return sem_labels, name
     # print('count label', np.count_nonzero(sem_labels > -100))
@@ -140,9 +140,9 @@ def f(fn):
     # print('Saving to ' + fn[:-15]+'_inst_nostuff.pth')
 
 
-otoc_dict = {}
-for fn in tqdm(files):
-    sem_labels, name = f(fn)
+# otoc_dict = {}
+# for fn in tqdm(files):
+#     sem_labels, name = f(fn)
 
     # name = name[:12]
 
@@ -157,10 +157,23 @@ for fn in tqdm(files):
 # for fn in files:
 #     f(fn)
 
-# p = mp.Pool(processes=mp.cpu_count())
-# if opt.data_split == 'test':
-#     p.map(f_test, files)
-# else:
-#     p.map(f, files)
+# p = mp.Pool(processes=16)
+# # if opt.data_split == 'test':
+# #     p.map(f_test, files)
+# # else:
+# p.map(f, files)
 # p.close()
 # p.join()
+
+final_dict = {}
+files = sorted(glob.glob('/home/ubuntu/fewshot3d_ws/SoftGroup/dataset/scannetv2/points/points_otoc_dir/scene*'))
+
+for file in files:
+    loaded_dict = torch.load(file)
+    print(loaded_dict.keys())
+    for k, v in loaded_dict.items():
+        final_dict[k] = v
+
+print('total len', len(final_dict.keys()))
+torch.save(final_dict, f'/home/ubuntu/fewshot3d_ws/SoftGroup/dataset/scannetv2/points/points_otoc2')
+

@@ -184,9 +184,10 @@ class CustomDataset(Dataset):
 
         if self.limit_anno and self.training:
             points_idx = self.limit_points_dict[scan_id]
-            mask_invalid = np.ones_like(semantic_label, dtype=bool)
 
+            # NOTE extend labels
             if self.extend_by_euclidean:
+                # print('buggggggggg')
                 extend_idx = []
                 pivots_xyz = xyz[points_idx, :]
 
@@ -209,6 +210,7 @@ class CustomDataset(Dataset):
                 # print(points_idx, extend_idx)
                 points_idx = np.unique(points_idx)
 
+            mask_invalid = np.ones_like(semantic_label, dtype=bool)
             mask_invalid[points_idx] = False
             semantic_label[mask_invalid] = -100
             instance_label[mask_invalid] = -100

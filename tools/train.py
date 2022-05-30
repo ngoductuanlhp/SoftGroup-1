@@ -42,6 +42,8 @@ def train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer):
     if train_loader.sampler is not None and cfg.dist:
         train_loader.sampler.set_epoch(epoch)
 
+    log_freq = len(train_loader)//10
+
     for i, batch in enumerate(train_loader, start=1):
         data_time.update(time.time() - end)
         cosine_lr_after_step(optimizer, cfg.optimizer.lr, epoch - 1, cfg.step_epoch, cfg.epochs)
@@ -68,7 +70,7 @@ def train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer):
         remain_time = str(datetime.timedelta(seconds=int(remain_time)))
         lr = optimizer.param_groups[0]['lr']
 
-        if is_multiple(i, 10):
+        if is_multiple(i, log_freq):
             log_str = f'Epoch [{epoch}/{cfg.epochs}][{i}/{len(train_loader)}]  '
             log_str += f'lr: {lr:.2g}, eta: {remain_time}, mem: {get_max_memory()}, '\
                 f'data_time: {data_time.val:.2f}, iter_time: {iter_time.val:.2f}'
