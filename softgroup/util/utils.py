@@ -172,6 +172,11 @@ def cuda_cast(func):
         for x in args:
             if isinstance(x, torch.Tensor):
                 x = x.cuda()
+                # print(x.shape)
+            elif isinstance(x, list) and len(x) and isinstance(x[0], torch.Tensor):
+                
+                for i in range(len(x)):
+                    x[i] = x[i].cuda()
             new_args.append(x)
         new_kwargs = {}
         for k, v in kwargs.items():

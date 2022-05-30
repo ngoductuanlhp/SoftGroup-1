@@ -1,4 +1,5 @@
 import functools
+from logging import logProcesses
 
 import spconv.pytorch as spconv
 import torch
@@ -91,17 +92,38 @@ class SoftGroup(nn.Module):
 
     @cuda_cast
     def forward_train(self, batch_idxs, voxel_coords, p2v_map, v2p_map, coords_float, feats,
-                      semantic_labels, instance_labels, instance_pointnum, instance_cls,
-                      pt_offset_labels, spatial_shape, batch_size, **kwargs):
+                      semantic_labels, spatial_shape, batch_size, **kwargs):
         losses = {}
-        feats = torch.cat((feats, coords_float), 1)
-        voxel_feats = voxelization(feats, p2v_map)
-        input = spconv.SparseConvTensor(voxel_feats, voxel_coords.int(), spatial_shape, batch_size)
-        semantic_scores = self.forward_backbone(input, v2p_map)
 
-        # point wise losses
-        point_wise_loss = self.point_wise_loss(semantic_scores, semantic_labels)
-        losses.update(point_wise_loss)
+        if feats.dim == 2:
+            feats = torch.cat((feats, coords_float), 1)
+            voxel_feats = voxelization(feats, p2v_map)
+            input = spconv.SparseConvTensor(voxel_feats, voxel_coords.int(), spatial_shape, batch_size)
+            semantic_scores = self.forward_backbone(input, v2p_map)
+
+            # point wise losses
+            point_wise_loss = self.point_wise_loss(semantic_scores, semantic_labels)
+            losses.update(point_wise_loss)
+        else:
+            # breakpoint()
+            feats1 = torch.cat((feats[0], coords_float[0]), 1)
+            voxel_feats1 = voxelization(feats1, p2v_map[0].cuda())
+            input1 = spconv.SparseConvTensor(voxel_feats1, voxel_coords[0].int().cuda(), spatial_shape[0], batch_size)
+            semantic_scores1 = self.forward_backbone(input1, v2p_map[0].cuda())
+
+            feats2 = torch.cat((feats[1], coords_float[1]), 1)
+            voxel_feats2 = voxelization(feats2, p2v_map[1].cuda())
+            input2 = spconv.SparseConvTensor(voxel_feats2, voxel_coords[1].int().cuda(), spatial_shape[1], batch_size)
+            semantic_scores2 = self.forward_backbone(input2, v2p_map[1].cuda())
+
+            # point wise losses
+            losses['semantic_loss1'] = self.point_wise_loss(semantic_scores1, semantic_labels[0]) * 0.5
+            losses['semantic_loss2'] = self.point_wise_loss(semantic_scores2, semantic_labels[1]) * 0.5
+            # losses.update(point_wise_loss)
+
+            consis_loss_dict = self.consistent_loss(semantic_scores1, semantic_scores2)
+
+            losses.update(consis_loss_dict)
 
         return self.parse_losses(losses)
 
@@ -112,15 +134,41 @@ class SoftGroup(nn.Module):
         else:
             semantic_loss = F.cross_entropy(
                 semantic_scores, semantic_labels, ignore_index=self.ignore_label)
-        losses['semantic_loss'] = semantic_loss
+        return semantic_loss
+        # losses['semantic_loss'] = semantic_loss
 
-        # pos_inds = instance_labels != self.ignore_label
-        # if pos_inds.sum() == 0:
-        #     offset_loss = 0 * pt_offsets.sum()
-        # else:
-        #     offset_loss = F.l1_loss(
-        #         pt_offsets[pos_inds], pt_offset_labels[pos_inds], reduction='sum') / pos_inds.sum()
-        # losses['offset_loss'] = offset_loss
+        # # pos_inds = instance_labels != self.ignore_label
+        # # if pos_inds.sum() == 0:
+        # #     offset_loss = 0 * pt_offsets.sum()
+        # # else:
+        # #     offset_loss = F.l1_loss(
+        # #         pt_offsets[pos_inds], pt_offset_labels[pos_inds], reduction='sum') / pos_inds.sum()
+        # # losses['offset_loss'] = offset_loss
+        # return losses
+
+
+    def consistent_loss(self, semantic_scores1, semantic_scores2, thresh_consistent=0.9):
+        # semantic_scores1: N x classes
+
+        losses = {}
+
+        pseudo_sem_scores2, pseudo_sem_labels2 = semantic_scores2.max(1)
+        pseudo_sem_scores2 = pseudo_sem_scores2.detach()
+        pseudo_sem_labels2 = pseudo_sem_labels2.detach()
+        consistent_mask2 = (pseudo_sem_scores2 >= thresh_consistent)
+        consis_loss1 = F.cross_entropy(
+                semantic_scores1[consistent_mask2], pseudo_sem_labels2[consistent_mask2], ignore_index=self.ignore_label)
+
+        pseudo_sem_scores1, pseudo_sem_labels1 = semantic_scores1.max(1)
+        pseudo_sem_scores1 = pseudo_sem_scores1.detach()
+        pseudo_sem_labels1 = pseudo_sem_labels1.detach()
+        consistent_mask1 = (pseudo_sem_scores1 >= thresh_consistent)
+        consis_loss2 = F.cross_entropy(
+                semantic_scores2[consistent_mask1], pseudo_sem_labels1[consistent_mask1], ignore_index=self.ignore_label)
+        
+        losses['consis_loss1'] = consis_loss1 * 0.5
+        losses['consis_loss2'] = consis_loss2 * 0.5
+
         return losses
 
 
@@ -136,7 +184,7 @@ class SoftGroup(nn.Module):
 
     @cuda_cast
     def forward_test(self, batch_idxs, voxel_coords, p2v_map, v2p_map, coords_float, feats,
-                     semantic_labels, instance_labels, pt_offset_labels, spatial_shape, batch_size,
+                     semantic_labels, spatial_shape, batch_size,
                      scan_ids, **kwargs):
         feats = torch.cat((feats, coords_float), 1)
         voxel_feats = voxelization(feats, p2v_map)
@@ -146,8 +194,8 @@ class SoftGroup(nn.Module):
         if self.test_cfg.x4_split:
             coords_float = self.merge_4_parts(coords_float)
             semantic_labels = self.merge_4_parts(semantic_labels)
-            instance_labels = self.merge_4_parts(instance_labels)
-            pt_offset_labels = self.merge_4_parts(pt_offset_labels)
+            # instance_labels = self.merge_4_parts(instance_labels)
+            # pt_offset_labels = self.merge_4_parts(pt_offset_labels)
         semantic_preds = semantic_scores.max(1)[1]
         ret = dict(
             scan_id=scan_ids[0],
