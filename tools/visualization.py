@@ -4,6 +4,8 @@ from operator import itemgetter
 
 import numpy as np
 import torch
+import open3d as o3d
+
 
 # yapf:disable
 COLOR_DETECTRON2 = np.array(
@@ -137,6 +139,30 @@ SEMANTIC_IDX2NAME = {
     39: 'otherfurniture'
 }
 
+def farthest_point_sample(xyz, npoint):
+    """
+    Input:
+        xyz: pointcloud data, [B, N, 3]
+        npoint: number of samples
+    Return:
+        centroids: sampled pointcloud index, [B, npoint]
+    """
+
+    N, C = xyz.shape
+    # print("DEBUG", N)
+    centroids = np.zeros(npoint, dtype=np.long)
+    distance = np.ones(N) * 1e10
+    farthest = np.random.choice(N, 1, False).astype(np.long)[0]
+    # print(farthest, xyz.shape, xyz[farthest, :].view(1,3))
+    for i in range(npoint):
+        centroids[i] = farthest
+        centroid = xyz[farthest, :].reshape(1, 3)
+        dist = np.sum((xyz - centroid) ** 2, -1)
+        mask = dist < distance
+        distance[mask] = dist[mask]
+        farthest = np.argmax(distance, -1)
+    return centroids
+
 
 def get_coords_color(opt):
     if opt.dataset == 's3dis':
@@ -245,6 +271,14 @@ def get_coords_color(opt):
                 _sort_id % len(COLOR_DETECTRON2)]
         rgb = inst_label_pred_rgb
 
+    elif (opt.task == 'query'):
+        inst_label_pred_rgb = np.ones(rgb.shape) * CLASS_COLOR['wall']
+
+        # choice = np.random.choice(rgb.shape[0], 128, False)
+        choice = farthest_point_sample(xyz, 256)
+        inst_label_pred_rgb[choice] = [255,0,0]
+        rgb = inst_label_pred_rgb
+
     if opt.data_split != 'test':
         sem_valid = (label != -100)
         xyz = xyz[sem_valid]
@@ -286,9 +320,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
         '--dataset',
-        choices=['scannet', 's3dis'],
+        choices=['scannetv2', 's3dis'],
         help='dataset for visualization',
-        default='scannet')
+        default='scannetv2')
     parser.add_argument(
         '--prediction_path',
         help='path to the prediction results',
@@ -300,7 +334,7 @@ if __name__ == '__main__':
         '--task',
         help='input/semantic_gt/semantic_pred/offset_semantic_pred/instance_gt/instance_pred',
         default='instance_pred')
-    parser.add_argument('--out', help='output point cloud file in FILE.ply format')
+    parser.add_argument('--out', default='', help='output point cloud file in FILE.ply format')
     opt = parser.parse_args()
 
     xyz, rgb = get_coords_color(opt)
@@ -311,7 +345,7 @@ if __name__ == '__main__':
         assert '.ply' in opt.out, 'output cloud file should be in FILE.ply format'
         write_ply(points, colors, None, opt.out)
     else:
-        import open3d as o3d
+        
         pc = o3d.geometry.PointCloud()
         pc.points = o3d.utility.Vector3dVector(points)
         pc.colors = o3d.utility.Vector3dVector(colors)
@@ -319,6 +353,6 @@ if __name__ == '__main__':
         vis = o3d.visualization.Visualizer()
         vis.create_window()
         vis.add_geometry(pc)
-        vis.get_render_option().point_size = 1.5
+        vis.get_render_option().point_size = 3
         vis.run()
         vis.destroy_window()
