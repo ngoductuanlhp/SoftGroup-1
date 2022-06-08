@@ -81,7 +81,7 @@ def train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer):
     checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq)
 
 
-def validate(epoch, model, val_loader, cfg, logger, writer):
+def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
     logger.info('Validation')
     results = []
     all_sem_preds, all_sem_labels, all_offset_preds, all_offset_labels = [], [], [], []
@@ -124,6 +124,11 @@ def validate(epoch, model, val_loader, cfg, logger, writer):
         writer.add_scalar('val/mIoU', miou, epoch)
         writer.add_scalar('val/Acc', acc, epoch)
         writer.add_scalar('val/Offset MAE', mae, epoch)
+
+        global best_ap50
+        if best_ap50 < eval_res['all_ap_50%']:
+            best_ap50 = eval_res['all_ap_50%']
+            checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq, best=True)
 
 
 def main():
@@ -177,10 +182,13 @@ def main():
 
     # train and val
     logger.info('Training')
+
+    global best_ap50
+    best_ap50 = 0
     for epoch in range(start_epoch, cfg.epochs + 1):
         train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer)
         if not args.skip_validate and (is_multiple(epoch, cfg.save_freq) or is_power2(epoch)):
-            validate(epoch, model, val_loader, cfg, logger, writer)
+            validate(epoch, model, optimizer, val_loader, cfg, logger, writer)
         writer.flush()
 
 
