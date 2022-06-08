@@ -7,12 +7,15 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 
+import faiss                     # make faiss available
+import faiss.contrib.torch_utils
+
 from ..ops import (ballquery_batch_p, bfs_cluster, get_mask_iou_on_cluster, get_mask_iou_on_pred,
                    get_mask_label, global_avg_pool, sec_max, sec_min, voxelization,
                    voxelization_idx)
 from ..util import cuda_cast, force_fp32, rle_encode
 from .blocks import MLP, ResidualBlock, UBlock
-
+import pickle
 
 class SoftGroup(nn.Module):
 
@@ -64,6 +67,23 @@ class SoftGroup(nn.Module):
             for param in mod.parameters():
                 param.requires_grad = False
 
+        
+        # print('rank', torch.distributed.get_rank())
+
+    def init_knn(self):
+        
+        if torch.distributed.is_initialized():
+            rank = torch.distributed.get_rank()
+        else:
+            rank = 0
+        cfg = faiss.GpuIndexFlatConfig()
+        cfg.useFloat16 = False
+        cfg.device = rank
+
+        # self.knn_res = faiss.StandardGpuResources()
+        # self.geo_knn = faiss.index_cpu_to_gpu(self.knn_res, 0, faiss.IndexFlatL2(3))
+        self.geo_knn = faiss.GpuIndexFlatL2(faiss.StandardGpuResources(), 3, cfg)
+
     def init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.BatchNorm1d):
@@ -84,48 +104,370 @@ class SoftGroup(nn.Module):
                 if isinstance(m, nn.BatchNorm1d):
                     m.eval()
 
-    def forward(self, batch, return_loss=False):
+    def forward(self, batch, return_loss=False, scale_factor=1):
         if return_loss:
-            return self.forward_train(**batch)
+            return self.forward_train(**batch, scale_factor=scale_factor)
         else:
             return self.forward_test(**batch)
 
     @cuda_cast
-    def forward_train(self, batch_idxs, voxel_coords, p2v_map, v2p_map, coords_float, feats,
-                      semantic_labels, spatial_shape, batch_size, **kwargs):
+    def forward_train(self, batch_idxs, batch_offsets, voxel_coords, p2v_map, v2p_map, coords_float, feats,
+                      semantic_labels, spatial_shape, batch_size, scale_factor=1, **kwargs):
+
+        scale_consistent = (1-scale_factor)
+        scale_group = scale_factor
         losses = {}
+            # if feats.dim == 2:
+            #     feats = torch.cat((feats, coords_float), 1)
+            #     voxel_feats = voxelization(feats, p2v_map)
+            #     input = spconv.SparseConvTensor(voxel_feats, voxel_coords.int(), spatial_shape, batch_size)
+            #     semantic_scores = self.forward_backbone(input, v2p_map)
 
-        if feats.dim == 2:
-            feats = torch.cat((feats, coords_float), 1)
-            voxel_feats = voxelization(feats, p2v_map)
-            input = spconv.SparseConvTensor(voxel_feats, voxel_coords.int(), spatial_shape, batch_size)
-            semantic_scores = self.forward_backbone(input, v2p_map)
+            #     # point wise losses
+            #     point_wise_loss = self.point_wise_loss(semantic_scores, semantic_labels)
+            #     losses.update(point_wise_loss)
+            # else:
+            #     # breakpoint()
+            #     feats1 = torch.cat((feats[0], coords_float[0]), 1)
+            #     voxel_feats1 = voxelization(feats1, p2v_map[0].cuda())
+            #     input1 = spconv.SparseConvTensor(voxel_feats1, voxel_coords[0].int().cuda(), spatial_shape[0], batch_size)
+            #     semantic_scores1 = self.forward_backbone(input1, v2p_map[0].cuda())
 
-            # point wise losses
-            point_wise_loss = self.point_wise_loss(semantic_scores, semantic_labels)
-            losses.update(point_wise_loss)
-        else:
-            # breakpoint()
-            feats1 = torch.cat((feats[0], coords_float[0]), 1)
-            voxel_feats1 = voxelization(feats1, p2v_map[0].cuda())
-            input1 = spconv.SparseConvTensor(voxel_feats1, voxel_coords[0].int().cuda(), spatial_shape[0], batch_size)
-            semantic_scores1 = self.forward_backbone(input1, v2p_map[0].cuda())
+            #     feats2 = torch.cat((feats[1], coords_float[1]), 1)
+            #     voxel_feats2 = voxelization(feats2, p2v_map[1].cuda())
+            #     input2 = spconv.SparseConvTensor(voxel_feats2, voxel_coords[1].int().cuda(), spatial_shape[1], batch_size)
+            #     semantic_scores2 = self.forward_backbone(input2, v2p_map[1].cuda())
 
-            feats2 = torch.cat((feats[1], coords_float[1]), 1)
-            voxel_feats2 = voxelization(feats2, p2v_map[1].cuda())
-            input2 = spconv.SparseConvTensor(voxel_feats2, voxel_coords[1].int().cuda(), spatial_shape[1], batch_size)
-            semantic_scores2 = self.forward_backbone(input2, v2p_map[1].cuda())
+            #     # point wise losses
+            #     losses['semantic_loss1'] = self.point_wise_loss(semantic_scores1, semantic_labels[0]) * 0.5
+            #     # losses['semantic_loss2'] = self.point_wise_loss(semantic_scores2, semantic_labels[1]) * 0.5
+            #     # losses.update(point_wise_loss)
 
-            # point wise losses
-            losses['semantic_loss1'] = self.point_wise_loss(semantic_scores1, semantic_labels[0]) * 0.5
-            losses['semantic_loss2'] = self.point_wise_loss(semantic_scores2, semantic_labels[1]) * 0.5
-            # losses.update(point_wise_loss)
+            #     consis_loss_dict = self.consistent_loss(semantic_scores1, semantic_scores2)
+            #     losses.update(consis_loss_dict)
 
-            consis_loss_dict = self.consistent_loss(semantic_scores1, semantic_scores2)
+            #     losses['group_loss'] = self.grouping_loss(coords_float[0], feats[0], semantic_scores1, semantic_labels[0], batch_offsets[0]) * 0.5
+                # losses['group_loss2'] = self.grouping_loss(coords_float[1], feats[1], semantic_scores2, semantic_labels[1], batch_offsets[1]) * 0.5
+        
+        middle_batch = batch_size // 2
 
-            losses.update(consis_loss_dict)
+        start = 0
+        middle = batch_offsets[middle_batch]
+        end = batch_offsets[-1]
+
+        rgb_feats = feats.clone().detach()
+        feats = torch.cat((feats, coords_float), 1)
+        voxel_feats = voxelization(feats, p2v_map)
+        input = spconv.SparseConvTensor(voxel_feats, voxel_coords.int(), spatial_shape, batch_size)
+        semantic_scores = self.forward_backbone(input, v2p_map)
+
+        # breakpoint()
+        # point wise losses
+        # losses['semantic_loss'] = self.point_wise_loss(semantic_scores, semantic_labels)
+        # losses.update(point_wise_loss)
+        # print('batch_size', batch_size)
+        # losses['group_loss'] = self.grouping_loss(coords_float, semantic_scores, semantic_labels, batch_offsets)
+        
+        
+
+        assert (middle - start) == (end - middle) and end == semantic_scores.shape[0]
+
+        semantic_scores1 = semantic_scores[start:middle, :]
+        semantic_scores2 = semantic_scores[middle:end, :]
+
+        semantic_labels1 = semantic_labels[start:middle]
+        semantic_labels2 = semantic_labels[middle:end]
+
+        semantic_scores_detach = semantic_scores1.clone().detach()
+        with torch.no_grad():
+            semantic_labels1_group = self.simple_grouping(coords_float[start:middle,:], semantic_scores_detach, semantic_labels1, rgb_feats[start:middle,:], batch_offsets[:middle_batch])
+
+        losses['semantic_loss'] = self.point_wise_loss(semantic_scores1, semantic_labels1_group) * scale_group
+
+            
+            # # point wise losses
+            # # losses['semantic_loss1'] = self.point_wise_loss(semantic_scores1, semantic_labels1) * 0.5
+            # # losses['semantic_loss2'] = self.point_wise_loss(semantic_scores2, semantic_labels[1]) * 0.5
+            # # losses.update(point_wise_loss)
+
+        consis_loss_dict = self.consistent_loss(semantic_scores1, semantic_scores2, scale=scale_consistent)
+        losses.update(consis_loss_dict)
+
+            # losses['group_loss'] = self.grouping_loss(coords_float[start:middle,:], semantic_scores1, semantic_labels1, batch_offsets[:middle_batch])
+            # # losses['group_loss2'] = self.grouping_loss(coords_float[1], feats[1], semantic_scores2, semantic_labels[1], batch_offsets[1]) * 0.5
+
+            
+                
 
         return self.parse_losses(losses)
+
+    def simple_grouping(self, coords_float, semantic_scores, semantic_labels, rgb_feats, batch_offsets):
+
+        semantic_labels1 = semantic_labels.clone()
+        # print('prev', torch.nonzero(semantic_labels1!= -100).view(-1))
+        # print('prev label', semantic_labels1[torch.nonzero(semantic_labels!= -100).view(-1)])
+        for idx in range(batch_offsets.shape[0]-1):
+
+            coords_float_b = coords_float[batch_offsets[idx]:batch_offsets[idx+1], :]
+            # feats_b = feats[batch_offsets[idx]:batch_offsets[idx+1], :]
+            # semantic_scores_b = semantic_scores[batch_offsets[idx]:batch_offsets[idx+1], :]
+            semantic_labels_b = semantic_labels[batch_offsets[idx]:batch_offsets[idx+1]]
+            rgb_feats_b = rgb_feats[batch_offsets[idx]:batch_offsets[idx+1], :]
+
+            # semantic_preds = semantic_scores_b.max(1)[1].detach()
+            # fg_conditions = (semantic_preds > 1) | (semantic_labels_b != self.ignore_label)
+
+            # fg_inds = torch.nonzero(fg_conditions).view(-1)
+
+            # fg_num = fg_inds.shape[0]
+            # if fg_num == 0:
+            #     continue
+
+            # coords_float_b_ = coords_float_b[fg_inds, :]
+            # semantic_labels_b_ = semantic_labels_b[fg_inds]
+            # # semantic_scores_b_ = semantic_scores_b[fg_inds, :]
+            # rgb_feats_b_ = rgb_feats_b[fg_inds, :]
+            
+            fg_num = coords_float_b.shape[0]
+            pivots_inds = torch.nonzero(semantic_labels_b != self.ignore_label).view(-1)
+            pivots_num = pivots_inds.shape[0]
+            if pivots_num == 0:
+                continue
+            # print(pivots_inds.shape, pivots_inds)
+            pivots_labels = semantic_labels_b[pivots_inds]
+            pivots = coords_float_b[pivots_inds, :]
+
+            self.geo_knn.add(coords_float_b)
+            # D_geo, I_geo = self.geo_knn.search(pivots, 16)
+            # D_geo = torch.sqrt(D_geo)
+
+            pivots_dists = torch.zeros((pivots_num, fg_num)).to(coords_float_b.device)
+            pivots_visited = torch.zeros((pivots_num, fg_num), dtype=torch.bool).to(coords_float_b.device)
+
+                # pivots_dists = torch.ones((fg_num), dtype=torch.float32).to(coords_float_b.device) * 100
+                # pivots_assigners = torch.zeros((fg_num), dtype=torch.long).to(coords_float_b.device)
+
+            max_step = 4
+            for p in range(pivots_num):
+                D_geo, I_geo = self.geo_knn.search(pivots[[p]], 16)
+                D_geo = torch.sqrt(D_geo)
+            
+                pivots_dists[p, pivots_inds[p]] = 10000
+                indices = I_geo[0, :]
+                for i in range(max_step):
+                    check_visited = pivots_visited[p, indices]
+                    new_indices1 = indices[(check_visited==0).type(torch.bool)]
+                    unique_indices = torch.unique(new_indices1)
+                    # unique_indices = torch.unique(indices)
+                    pivots_dists[p, unique_indices] = max_step - i
+                    pivots_visited[p, unique_indices] = 1
+                    # print(I_geo[unique_indices,:].shape)
+                    # indices = torch.cat([I_geo[unique_indices,:].reshape(-1), unique_indices])
+
+                    D_geo, I_geo = self.geo_knn.search(coords_float_b[unique_indices], 16)
+                    D_geo = torch.sqrt(D_geo)
+
+                    new_indices = I_geo.reshape(-1)
+
+                    # print('prev', new_indices.shape)
+                    new_indices_dis = D_geo.reshape(-1)
+
+
+                    prev_rgb = torch.repeat_interleave(rgb_feats_b[unique_indices], 16, dim=0) # prev, 3
+                    post_rgb = rgb_feats_b[new_indices] # post, 3
+                    # # new_indices_rgb = rgb[new_indices, :]
+                    color_diff = torch.sqrt(torch.sum((post_rgb - prev_rgb)**2, axis=-1)) # N
+                    # # print(torch.mean(color_diff))
+                    valid_new_indices = (new_indices_dis < 0.06) & (color_diff < 0.1)
+                    # valid_new_indices = (new_indices_dis < 0.1)
+                    new_indices = new_indices[valid_new_indices]
+
+                    indices = torch.cat([new_indices, unique_indices])
+
+            max_dist, max_pivot_inds = torch.max(pivots_dists, dim=0)
+            # max_pivot_inds[max_dist==0] = -1
+
+            pseudo_labels = pivots_labels[max_pivot_inds]
+            pseudo_labels[max_dist==0] = self.ignore_label
+                # for p in range(pivots_num):
+                #     neighbors = I_geo[p].type(torch.long)
+                #     neighbors_dist = D_geo[p].type(torch.float32)
+
+                #     prev_dist = pivots_dists[neighbors]
+                #     valid = (neighbors_dist < 0.1) & (neighbors_dist < prev_dist)
+                    
+                #     neighbors = neighbors[valid]
+                #     neighbors_dist = neighbors_dist[valid]
+
+                #     # print()
+                #     # print(valid, neighbors_dist)
+                #     pivots_dists[neighbors] = neighbors_dist
+                #     pivots_assigners[neighbors] = p
+
+                # pseudo_labels = pivots_labels[pivots_assigners]
+                # pseudo_labels[pivots_dists==100] = self.ignore_label
+
+            # print(pseudo_labels.shape, torch.count_nonzero(pseudo_labels!=-100), torch.count_nonzero(pivots_dists==100))
+
+            # temp = torch.ones((coords_float_b.shape[0]), dtype=torch.long).to(coords_float_b.device) * self.ignore_label
+            # temp[fg_inds] = pseudo_labels
+
+            semantic_labels1[batch_offsets[idx]:batch_offsets[idx+1]] = pseudo_labels
+            self.geo_knn.reset()
+
+        return semantic_labels1
+
+    def grouping_loss(self, coords_float, semantic_scores, semantic_labels, rgb_feats, batch_offsets):
+        losses = {}
+        loss_groups = torch.tensor([0.0], dtype=torch.float, requires_grad=True).to(coords_float.device)
+        # print(batch_offsets)
+        
+        semantic_labels1 = semantic_labels.clone()
+        # print('prev', torch.nonzero(semantic_labels1!= -100).view(-1))
+        # print('prev label', semantic_labels1[torch.nonzero(semantic_labels!= -100).view(-1)])
+        for idx in range(batch_offsets.shape[0]-1):
+
+            coords_float_b = coords_float[batch_offsets[idx]:batch_offsets[idx+1], :]
+            # feats_b = feats[batch_offsets[idx]:batch_offsets[idx+1], :]
+            semantic_scores_b = semantic_scores[batch_offsets[idx]:batch_offsets[idx+1], :]
+            semantic_labels_b = semantic_labels[batch_offsets[idx]:batch_offsets[idx+1]]
+            rgb_feats_b = rgb_feats[batch_offsets[idx]:batch_offsets[idx+1], :]
+            # breakpoint()
+            semantic_preds = semantic_scores_b.max(1)[1].detach()
+
+            semantic_softmax = F.softmax(semantic_scores_b, dim=-1).detach()
+            fg_conditions = (semantic_preds > 1) | (semantic_labels_b != self.ignore_label)
+
+            # fg_conditions = (semantic_preds > 1)
+
+
+            fg_inds = torch.nonzero(fg_conditions).view(-1)
+            # print(fg_inds.shape)
+
+            # breakpoint()
+            # print(fg_inds.shape, fg_inds)
+            fg_num = fg_inds.shape[0]
+            if fg_num == 0:
+                continue
+
+            coords_float_b_ = coords_float_b[fg_inds, :]
+            semantic_labels_b_ = semantic_labels_b[fg_inds]
+            semantic_scores_b_ = semantic_scores_b[fg_inds, :]
+            rgb_feats_b_ = rgb_feats_b[fg_inds, :]
+            
+            # print('debug fb', torch.count_nonzero(semantic_labels_b > 1), torch.count_nonzero(semantic_labels_b_ > 1))
+            # print('origin label', semantic_labels_b[semantic_labels_b!= -100])
+            with torch.no_grad():
+
+                pivots_inds = torch.nonzero(semantic_labels_b_ != self.ignore_label).view(-1)
+
+                pivots_num = pivots_inds.shape[0]
+                if pivots_num == 0:
+                    continue
+                # print(pivots_inds.shape, pivots_inds)
+                pivots_labels = semantic_labels_b_[pivots_inds]
+                pivots = coords_float_b_[pivots_inds, :]
+
+                
+                # breakpoint()
+                self.geo_knn.add(coords_float_b_)
+
+                pivots_dists = torch.zeros((pivots_num, fg_num)).to(coords_float_b_.device)
+                pivots_visited = torch.zeros((pivots_num, fg_num), dtype=torch.bool).to(coords_float_b_.device)
+
+                D_geo, I_geo = self.geo_knn.search(coords_float_b_, 12)
+                D_geo = D_geo[:, 1:] # n_points ,7
+                I_geo = I_geo[:, 1:]
+
+                D_geo = torch.sqrt(D_geo)
+
+
+                # for p in range(pivots_num):
+                #     pivots_dists[p, I_geo[pivots_inds[p]]] = 100
+                #     pivots_dists[p, pivots_inds[p]] = 1000
+                max_step = 4
+                for p in range(pivots_num):
+                    pivots_dists[p, pivots_inds[p]] = 10000
+                    indices = I_geo[pivots_inds[p], :]
+                    for i in range(max_step):
+                        check_visited = pivots_visited[p, indices]
+                        new_indices1 = indices[(check_visited==0).type(torch.bool)]
+                        unique_indices = torch.unique(new_indices1)
+                        # unique_indices = torch.unique(indices)
+                        pivots_dists[p, unique_indices] = max_step - i
+                        pivots_visited[p, unique_indices] = 1
+                        # print(I_geo[unique_indices,:].shape)
+                        # indices = torch.cat([I_geo[unique_indices,:].reshape(-1), unique_indices])
+
+                        new_indices = I_geo[unique_indices,:].reshape(-1)
+
+                        # print('prev', new_indices.shape)
+                        new_indices_dis = D_geo[unique_indices,:].reshape(-1)
+
+
+                        prev_rgb = torch.repeat_interleave(rgb_feats_b_[unique_indices], 11, dim=0) # prev, 3
+                        post_rgb = rgb_feats_b_[new_indices] # post, 3
+                        # new_indices_rgb = rgb[new_indices, :]
+                        color_diff = torch.sqrt(torch.sum((post_rgb - prev_rgb)**2, axis=-1)) # N
+                        # print(torch.mean(color_diff))
+                        # valid_new_indices = (new_indices_dis < 0.04) & (color_diff < 0.1)
+                        valid_new_indices = (new_indices_dis < 0.04)
+
+
+
+                        new_indices = new_indices[valid_new_indices]
+
+
+                #         # print('post', new_indices.shape)
+
+                        indices = torch.cat([new_indices, unique_indices])
+                self.geo_knn.reset()
+        
+
+                max_dist, max_pivot_inds = torch.max(pivots_dists, dim=0)
+                # max_pivot_inds[max_dist==0] = -1
+
+                group_labels = pivots_labels[max_pivot_inds]
+                group_labels[max_dist==0] = self.ignore_label
+                group_labels = group_labels.detach()
+                # print(group_labels.shape)
+
+                temp = torch.ones((coords_float_b)).to(coords_float_b.device) * self.ignore_label
+                temp[fg_inds] = group_labels
+                semantic_labels[batch_offsets[idx]:batch_offsets[idx+1]] = temp
+
+                # save_dict = {
+                #     # 'rgb': rgb.cpu().numpy()
+                #     'xyz': coords_float_b_.cpu().numpy(),
+                #     'pivots': pivots.cpu().numpy(),
+                #     'max_pivot_inds': max_pivot_inds.cpu().numpy(),
+                #     'group_labels': group_labels.cpu().numpy(),
+                # }
+
+                # print(group_labels.shape, semantic_scores_b_.shape)
+                # uni_label, count = torch.unique(group_labels, return_counts=True)
+                # print(uni_label, count)
+
+                # with open('geodist/test_knn_pred.pkl', 'wb') as handle:
+                #     pickle.dump(save_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                # quit()
+
+        # print('post', torch.nonzero(semantic_labels!= -100).view(-1))
+        # print('post label', semantic_labels[torch.nonzero(semantic_labels1!= -100).view(-1)])
+
+        
+
+        return semantic_labels
+            
+
+            # for u in uni_label:
+            #     print(torch.count_nonzero(grou))
+            # if torch.sum(group_labels != self.ignore_label) > 0:
+            #     loss_groups += F.cross_entropy(
+            #         semantic_scores_b_, group_labels, ignore_index=self.ignore_label)
+
+        # loss_groups = loss_groups / (batch_offsets.shape[0] - 1)
+        # return loss_groups
 
     def point_wise_loss(self, semantic_scores, semantic_labels):
         losses = {}
@@ -147,9 +489,8 @@ class SoftGroup(nn.Module):
         # return losses
 
 
-    def consistent_loss(self, semantic_scores1, semantic_scores2, thresh_consistent=0.9):
+    def consistent_loss(self, semantic_scores1, semantic_scores2, thresh_consistent=0.9, scale=1):
         # semantic_scores1: N x classes
-
         losses = {}
 
         pseudo_sem_scores2, pseudo_sem_labels2 = semantic_scores2.max(1)
@@ -159,15 +500,15 @@ class SoftGroup(nn.Module):
         consis_loss1 = F.cross_entropy(
                 semantic_scores1[consistent_mask2], pseudo_sem_labels2[consistent_mask2], ignore_index=self.ignore_label)
 
-        pseudo_sem_scores1, pseudo_sem_labels1 = semantic_scores1.max(1)
-        pseudo_sem_scores1 = pseudo_sem_scores1.detach()
-        pseudo_sem_labels1 = pseudo_sem_labels1.detach()
-        consistent_mask1 = (pseudo_sem_scores1 >= thresh_consistent)
-        consis_loss2 = F.cross_entropy(
-                semantic_scores2[consistent_mask1], pseudo_sem_labels1[consistent_mask1], ignore_index=self.ignore_label)
+        # pseudo_sem_scores1, pseudo_sem_labels1 = semantic_scores1.max(1)
+        # pseudo_sem_scores1 = pseudo_sem_scores1.detach()
+        # pseudo_sem_labels1 = pseudo_sem_labels1.detach()
+        # consistent_mask1 = (pseudo_sem_scores1 >= thresh_consistent)
+        # consis_loss2 = F.cross_entropy(
+        #         semantic_scores2[consistent_mask1], pseudo_sem_labels1[consistent_mask1], ignore_index=self.ignore_label)
         
-        losses['consis_loss1'] = consis_loss1 * 0.5
-        losses['consis_loss2'] = consis_loss2 * 0.5
+        losses['consis_loss1'] = consis_loss1 * scale
+        # losses['consis_loss2'] = consis_loss2 * 0.5
 
         return losses
 

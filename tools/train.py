@@ -48,8 +48,10 @@ def train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer):
     for i, batch in enumerate(train_loader, start=1):
         data_time.update(time.time() - end)
         cosine_lr_after_step(optimizer, cfg.optimizer.lr, epoch - 1, cfg.step_epoch, cfg.epochs)
+
+        scale_factor = float(1/epoch)
         with torch.cuda.amp.autocast(enabled=cfg.fp16):
-            loss, log_vars = model(batch, return_loss=True)
+            loss, log_vars = model(batch, return_loss=True, scale_factor=scale_factor)
 
         # meter_dict
         for k, v in log_vars.items():
@@ -161,6 +163,11 @@ def main():
     if args.dist:
         model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()])
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.fp16)
+
+    if args.dist:
+        model.module.init_knn()
+    else:
+        model.init_knn()
 
     # data
     train_set = build_dataset(cfg.data.train, logger)
