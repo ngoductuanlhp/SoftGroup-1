@@ -320,7 +320,9 @@ class SoftGroup(nn.Module):
             if class_id in self.grouping_cfg.ignore_classes:
                 continue
             scores = semantic_scores[:, class_id].contiguous()
-            object_idxs = (scores > self.grouping_cfg.score_thr).nonzero().view(-1)
+
+            # object_idxs = (scores > self.grouping_cfg.score_thr).nonzero().view(-1)
+            object_idxs = torch.nonzero(scores > self.grouping_cfg.score_thr).view(-1)
             if object_idxs.size(0) < self.test_cfg.min_npoint:
                 continue
             batch_idxs_ = batch_idxs[object_idxs]

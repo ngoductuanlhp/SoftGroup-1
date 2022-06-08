@@ -56,8 +56,8 @@ data:
 
 dataloader:
   train:
-    batch_size: 4
-    num_workers: 4
+    batch_size: 16
+    num_workers: 8
   test:
     batch_size: 1
     num_workers: 1
@@ -71,9 +71,9 @@ save_cfg:
   offset: True
   instance: True
 
-fp16: False
+fp16: True
 epochs: 128
 step_epoch: 50
 save_freq: 4
-pretrain: './hais_ckpt_spconv2.pth'
+pretrain: './pretrains/hais_ckpt_spconv2.pth'
 work_dir: ''
