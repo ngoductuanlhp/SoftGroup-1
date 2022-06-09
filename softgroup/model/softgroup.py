@@ -10,7 +10,7 @@ from ..ops import (ballquery_batch_p, bfs_cluster, get_mask_iou_on_cluster, get_
                    get_mask_label, global_avg_pool, sec_max, sec_min, sec_mean, voxelization,
                    voxelization_idx)
 from ..util import cuda_cast, force_fp32, rle_encode
-from .blocks import MLP, ResidualBlock, UBlock, conv_with_kaiming_uniform
+from .blocks import MLP, ResidualBlock, UBlock, conv_with_kaiming_uniform, PositionalEmbedding
 
 
 def dice_coefficient(x, target):
@@ -21,6 +21,53 @@ def dice_coefficient(x, target):
     intersection = (x * target).sum()
     union = (x ** 2.0).sum() + (target ** 2.0).sum() + eps
     loss = 1. - (2 * intersection / union)
+    return loss
+
+def compute_dice_loss(inputs, targets):
+    """
+    Compute the DICE loss, similar to generalized IOU for masks
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example.
+        targets: A float tensor with the same shape as inputs. Stores the binary
+                 classification label for each element in inputs
+                (0 for the negative class and 1 for the positive class).
+    """
+    inputs = inputs.sigmoid()
+    # inputs = inputs.flatten(1)
+    numerator = 2 * (inputs * targets).sum()
+    denominator = inputs.sum() + targets.sum()
+    loss = 1 - (numerator + 1) / (denominator + 1)
+    return loss
+
+def sigmoid_focal_loss(inputs, targets, weights, alpha: float = 0.25, gamma: float = 2):
+    """
+    Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example.
+        targets: A float tensor with the same shape as inputs. Stores the binary
+                 classification label for each element in inputs
+                (0 for the negative class and 1 for the positive class).
+        alpha: (optional) Weighting factor in range (0,1) to balance
+                positive vs negative examples. Default = -1 (no weighting).
+        gamma: Exponent of the modulating factor (1 - p_t) to
+               balance easy vs hard examples.
+    Returns:
+        Loss tensor
+    """
+    prob = inputs.sigmoid()
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+    p_t = prob * targets + (1 - prob) * (1 - targets)
+    loss = ce_loss * ((1 - p_t) ** gamma)
+
+    if alpha >= 0:
+        alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+        loss = alpha_t * loss
+    
+    # return loss.sum()
+
+    loss = (loss * weights).sum()
     return loss
 
 class SoftGroup(nn.Module):
@@ -37,6 +84,7 @@ class SoftGroup(nn.Module):
                  instance_voxel_cfg=None,
                  train_cfg=None,
                  test_cfg=None,
+                 embedding_relative_coord=False,
                  fixed_modules=[]):
         super().__init__()
         self.channels = channels
@@ -51,7 +99,7 @@ class SoftGroup(nn.Module):
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
         self.fixed_modules = fixed_modules
-
+        self.embedding_relative_coord = embedding_relative_coord
         block = ResidualBlock
         norm_fn = functools.partial(nn.BatchNorm1d, eps=1e-4, momentum=0.1)
 
@@ -79,11 +127,18 @@ class SoftGroup(nn.Module):
             ### convolution before the condinst take place (convolution num before the generated parameters take place)
             conv_block = conv_with_kaiming_uniform("BN", activation=True)
 
-            self.weight_nums = [(channels + 3) * (channels), (channels) * 1]
+            if self.embedding_relative_coord:
+                n_freqs = 4
+                self.pos_embed = PositionalEmbedding(3, n_freqs)
+                in_channels = channels + self.pos_embed.out_channels
+            else:
+                in_channels = (channels + 3)
+
+            self.weight_nums = [in_channels * (channels), (channels) * 1]
             self.bias_nums = [(channels), 1]
             self.num_gen_params = sum(self.weight_nums) + sum(self.bias_nums)
             self.controller = nn.Sequential(*[conv_block(channels, channels), conv_block(channels, channels), nn.Conv1d(channels, self.num_gen_params, kernel_size=1)])
-            self.mask_tower = nn.Sequential(*[conv_block(channels, channels), conv_block(channels, channels), nn.Conv1d(channels, channels, 1)])
+            self.mask_tower = nn.Sequential(*[conv_block(channels, channels), conv_block(channels, channels), conv_block(channels, channels), nn.Conv1d(channels, channels, 1)])
 
         self.init_weights()
 
@@ -291,9 +346,10 @@ class SoftGroup(nn.Module):
                 valid_id = torch.nonzero(weights[n] > 0).view(-1)
                 
                 if valid_id.shape[0] > 0:
-                    valid_mask_logits = mask_logits[n, valid_id].sigmoid().view(-1)
+                    valid_mask_logits = mask_logits[n, valid_id].view(-1)
                     valid_mask_labels =  mask_labels[n, valid_id].view(-1)
-                    dice_loss += dice_coefficient(valid_mask_logits, valid_mask_labels).mean()
+                    # dice_loss += dice_coefficient(valid_mask_logits, valid_mask_labels).mean()
+                    dice_loss += compute_dice_loss(valid_mask_logits, valid_mask_labels)
                     valid_num_dice_loss += 1
 
                     intersection = ((valid_mask_logits >= 0.5) * valid_mask_labels).sum()
@@ -305,8 +361,10 @@ class SoftGroup(nn.Module):
                 gt_ious_mask_[n] = 1
 
             # print(class_id, mask_labels.sum())
-            mask_loss = F.binary_cross_entropy(
-                mask_logits.sigmoid().type(torch.float32), mask_labels, weight=weights, reduction='sum')
+            # mask_loss = F.binary_cross_entropy(
+            #     mask_logits.sigmoid().type(torch.float32), mask_labels, weight=weights, reduction='sum')
+
+            mask_loss = sigmoid_focal_loss(mask_logits, mask_labels, weights)
 
             # print(class_id, weights.sum(), mask_loss)
             if weights.sum() > 0:
@@ -534,6 +592,10 @@ class SoftGroup(nn.Module):
         x = mask_features.permute(2,1,0).repeat(num_insts, 1, 1) ### num_inst * c * N_mask
 
         relative_coords = inst_coords_mean_.reshape(-1, 1, 3) - coords_.reshape(1, -1, 3) ### N_inst * N_mask * 3
+
+        if self.embedding_relative_coord:
+            relative_coords = self.pos_embed(relative_coords.reshape(-1,3)).reshape(num_insts, n_mask, -1)
+
         relative_coords = relative_coords.permute(0,2,1) ### num_inst * 3 * n_mask
 
         if use_coords:
@@ -566,6 +628,7 @@ class SoftGroup(nn.Module):
 
         controller = self.controller(feats.unsqueeze(-1)).squeeze(-1) # N, num_params
 
+        cls_scores_softmax = cls_scores.softmax(dim=-1)
         inst_cls_pred = torch.max(cls_scores, dim=1)[1] # 0 -> 17
 
         mask_feats = self.mask_tower(output_feats.unsqueeze(-1).permute(2,1,0)).permute(2,1,0)
@@ -584,7 +647,9 @@ class SoftGroup(nn.Module):
 
             mask_feats_ = mask_feats[object_idxs, :]
 
-            inst_idxs = torch.nonzero(inst_cls_pred == (class_id - label_shift)).view(-1)
+            scores = cls_scores_softmax[:, class_id-label_shift].contiguous()
+            inst_idxs = torch.nonzero(scores > self.grouping_cfg.score_thr).view(-1)
+            # inst_idxs = torch.nonzero(inst_cls_pred == (class_id - label_shift)).view(-1)
 
             if inst_idxs.shape[0] == 0 or object_idxs.shape[0] == 0:
                 continue
@@ -658,10 +723,10 @@ class SoftGroup(nn.Module):
             inst_idxs = inst_idxs_dict[class_id] # fg inst
             cur_mask_scores = mask_logits_dict[class_id]
 
-            # cur_cls_scores = cls_scores[inst_idxs, class_id-label_shift]
+            cur_cls_scores = cls_scores[inst_idxs, class_id-label_shift]
 
-            cur_cls_scores, cur_cls_inds = torch.max(cls_scores[inst_idxs], dim=1)
-            assert torch.all(cur_cls_inds == class_id-label_shift)
+            # cur_cls_scores, cur_cls_inds = torch.max(cls_scores[inst_idxs], dim=1)
+            # assert torch.all(cur_cls_inds == class_id-label_shift)
 
             cur_iou_scores = iou_scores[inst_idxs]
             
