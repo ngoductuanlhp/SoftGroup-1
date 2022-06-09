@@ -72,6 +72,11 @@ class SoftGroup(nn.Module):
             for param in mod.parameters():
                 param.requires_grad = False
 
+        if 'input_conv' in self.fixed_modules and 'unet' in self.fixed_modules:
+            self.freeze_backbone = True
+        else:
+            self.freeze_backbone = False
+
     def init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.BatchNorm1d):
@@ -109,9 +114,11 @@ class SoftGroup(nn.Module):
         semantic_scores, pt_offsets, output_feats = self.forward_backbone(input, v2p_map)
 
         # point wise losses
-        point_wise_loss = self.point_wise_loss(semantic_scores, pt_offsets, semantic_labels,
-                                               instance_labels, pt_offset_labels)
-        losses.update(point_wise_loss)
+
+        if not self.freeze_backbone:
+            point_wise_loss = self.point_wise_loss(semantic_scores, pt_offsets, semantic_labels,
+                                                instance_labels, pt_offset_labels)
+            losses.update(point_wise_loss)
 
         # instance losses
         if not self.semantic_only:
@@ -255,18 +262,21 @@ class SoftGroup(nn.Module):
         return ret
 
     def forward_backbone(self, input, input_map, x4_split=False):
-        if x4_split:
-            output_feats = self.forward_4_parts(input, input_map)
-            output_feats = self.merge_4_parts(output_feats)
-        else:
-            output = self.input_conv(input)
-            output = self.unet(output)
-            output = self.output_layer(output)
-            output_feats = output.features[input_map.long()]
 
-        semantic_scores = self.semantic_linear(output_feats)
-        pt_offsets = self.offset_linear(output_feats)
-        return semantic_scores, pt_offsets, output_feats
+        context = torch.no_grad if self.freeze_backbone else torch.enable_grad
+        with context():
+            if x4_split:
+                output_feats = self.forward_4_parts(input, input_map)
+                output_feats = self.merge_4_parts(output_feats)
+            else:
+                output = self.input_conv(input)
+                output = self.unet(output)
+                output = self.output_layer(output)
+                output_feats = output.features[input_map.long()]
+
+            semantic_scores = self.semantic_linear(output_feats)
+            pt_offsets = self.offset_linear(output_feats)
+            return semantic_scores, pt_offsets, output_feats
 
     def forward_4_parts(self, x, input_map):
         """Helper function for s3dis: devide and forward 4 parts of a scene."""

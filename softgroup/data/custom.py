@@ -136,6 +136,7 @@ class CustomDataset(Dataset):
             xyz = self.elastic(xyz, 20 * self.voxel_cfg.scale // 50,
                                160 * self.voxel_cfg.scale / 50)
         # xyz_middle = xyz / self.voxel_cfg.scale
+
         xyz = xyz - xyz.min(0)
         max_tries = 5
         while (max_tries > 0):
