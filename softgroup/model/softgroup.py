@@ -82,8 +82,8 @@ class SoftGroup(nn.Module):
             self.weight_nums = [(channels + 3) * (channels//2), (channels//2) * 1]
             self.bias_nums = [(channels//2), 1]
             self.num_gen_params = sum(self.weight_nums) + sum(self.bias_nums)
-            self.controller = nn.Sequential(*[conv_block(channels, channels), nn.Conv1d(channels, self.num_gen_params, kernel_size=1)])
-            self.mask_tower = nn.Sequential(*[conv_block(channels, channels), nn.Conv1d(channels, channels, 1)])
+            self.controller = nn.Sequential(*[conv_block(channels, channels), conv_block(channels, channels), nn.Conv1d(channels, self.num_gen_params, kernel_size=1)])
+            self.mask_tower = nn.Sequential(*[conv_block(channels, channels), conv_block(channels, channels), nn.Conv1d(channels, channels, 1)])
 
                 # ### cond inst generate parameters for
                 # USE_COORDS = True
@@ -343,7 +343,7 @@ class SoftGroup(nn.Module):
             # iou_score_weight = (labels < self.instance_classes).float()
             # iou_score_slice = iou_scores[slice_inds, labels]
 
-        iou_score_loss = F.mse_loss(iou_scores, gt_ious, reduction='none')
+        iou_score_loss = F.mse_loss(iou_scores.sigmoid(), gt_ious, reduction='none')
         iou_score_loss = (iou_score_loss * gt_ious_mask).sum() / (gt_ious_mask.sum() + 1e-4)
         losses['iou_score_loss'] = iou_score_loss
         return losses
@@ -672,6 +672,7 @@ class SoftGroup(nn.Module):
 
             object_idxs = per_cls_object_idxs[class_id]
             inst_idxs = inst_idxs_dict[class_id]
+            
             cur_cls_scores = cls_scores[inst_idxs, class_id-label_shift]
             cur_iou_scores = iou_scores[inst_idxs]
             cur_mask_scores = mask_logits_dict[class_id]
@@ -680,7 +681,8 @@ class SoftGroup(nn.Module):
 
             cls_pred = cur_cls_scores.new_full((num_instances, ), class_id-label_shift+1, dtype=torch.long)
 
-            score_pred = cur_cls_scores * cur_iou_scores.clamp(0, 1)
+            # score_pred = cur_cls_scores * cur_iou_scores.clamp(0, 1)
+            score_pred = cur_cls_scores.sigmoid() * cur_iou_scores.sigmoid()
 
             mask_pred = torch.zeros((num_instances, num_points), dtype=torch.int, device='cuda')
             mask_inds = (cur_mask_scores > self.test_cfg.mask_score_thr).type(torch.int)

@@ -24,8 +24,10 @@ model:
     pos_iou_thr: 0.5
   test_cfg:
     x4_split: False
-    cls_score_thr: 0.001
-    mask_score_thr: -0.5
+    # cls_score_thr: 0.001
+    # mask_score_thr: -0.5
+    cls_score_thr: 0.05
+    mask_score_thr: 0
     min_npoint: 100
   fixed_modules: ['input_conv', 'unet', 'output_layer', 'semantic_linear', 'offset_linear']
 
@@ -36,7 +38,7 @@ data:
     prefix: 'train'
     suffix: '_inst_nostuff.pth'
     training: True
-    repeat: 4
+    repeat: 1
     voxel_cfg:
       scale: 50
       spatial_shape: [128, 512]
