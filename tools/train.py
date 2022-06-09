@@ -116,14 +116,16 @@ def validate(epoch, model, optimizer,val_loader, cfg, logger, writer):
             writer.add_scalar('val/AP_25', eval_res['all_ap_25%'], epoch)
             logger.info('AP: {:.3f}. AP_50: {:.3f}. AP_25: {:.3f}'.format(
                 eval_res['all_ap'], eval_res['all_ap_50%'], eval_res['all_ap_25%']))
-        logger.info('Evaluate semantic segmentation and offset MAE')
-        miou = evaluate_semantic_miou(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
-        acc = evaluate_semantic_acc(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
-        mae = evaluate_offset_mae(all_offset_preds, all_offset_labels, all_inst_labels,
-                                  cfg.model.ignore_label, logger)
-        writer.add_scalar('val/mIoU', miou, epoch)
-        writer.add_scalar('val/Acc', acc, epoch)
-        writer.add_scalar('val/Offset MAE', mae, epoch)
+
+        if not model.module.freeze_backbone:
+            logger.info('Evaluate semantic segmentation and offset MAE')
+            miou = evaluate_semantic_miou(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
+            acc = evaluate_semantic_acc(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
+            mae = evaluate_offset_mae(all_offset_preds, all_offset_labels, all_inst_labels,
+                                    cfg.model.ignore_label, logger)
+            writer.add_scalar('val/mIoU', miou, epoch)
+            writer.add_scalar('val/Acc', acc, epoch)
+            writer.add_scalar('val/Offset MAE', mae, epoch)
 
         global best_ap50
         if best_ap50 < eval_res['all_ap_50%']:

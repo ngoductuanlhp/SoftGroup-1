@@ -20,16 +20,18 @@ model:
     scale: 50
     spatial_shape: 20
   train_cfg:
-    max_proposal_num: 200
+    # max_proposal_num: 200
+    max_proposal_num: 400
     pos_iou_thr: 0.5
   test_cfg:
     x4_split: False
-    # cls_score_thr: 0.001
-    # mask_score_thr: -0.5
-    cls_score_thr: 0.05
-    mask_score_thr: 0
+    cls_score_thr: 0.001
+    mask_score_thr: -0.5
+    # cls_score_thr: 0.05
+    # mask_score_thr: 0
     min_npoint: 100
-  fixed_modules: ['input_conv', 'unet', 'output_layer', 'semantic_linear', 'offset_linear']
+  # fixed_modules: ['input_conv', 'unet', 'output_layer', 'semantic_linear', 'offset_linear']
+  fixed_modules: []
 
 data:
   train:
@@ -38,7 +40,7 @@ data:
     prefix: 'train'
     suffix: '_inst_nostuff.pth'
     training: True
-    repeat: 1
+    repeat: 4
     voxel_cfg:
       scale: 50
       spatial_shape: [128, 512]
@@ -58,8 +60,8 @@ data:
 
 dataloader:
   train:
-    batch_size: 16
-    num_workers: 8
+    batch_size: 4
+    num_workers: 4
   test:
     batch_size: 1
     num_workers: 1
@@ -74,8 +76,8 @@ save_cfg:
   instance: True
 
 fp16: True
-epochs: 128
-step_epoch: 50
+epochs: 32
+step_epoch: 16
 save_freq: 4
-pretrain: './work_dirs/softgroup_scannet/epoch_76.pth'
+pretrain: './work_dirs/softgroup_scannet/best.pth'
 work_dir: ''

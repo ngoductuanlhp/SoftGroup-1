@@ -79,38 +79,11 @@ class SoftGroup(nn.Module):
             ### convolution before the condinst take place (convolution num before the generated parameters take place)
             conv_block = conv_with_kaiming_uniform("BN", activation=True)
 
-            self.weight_nums = [(channels + 3) * (channels//2), (channels//2) * 1]
-            self.bias_nums = [(channels//2), 1]
+            self.weight_nums = [(channels + 3) * (channels), (channels) * 1]
+            self.bias_nums = [(channels), 1]
             self.num_gen_params = sum(self.weight_nums) + sum(self.bias_nums)
             self.controller = nn.Sequential(*[conv_block(channels, channels), conv_block(channels, channels), nn.Conv1d(channels, self.num_gen_params, kernel_size=1)])
             self.mask_tower = nn.Sequential(*[conv_block(channels, channels), conv_block(channels, channels), nn.Conv1d(channels, channels, 1)])
-
-                # ### cond inst generate parameters for
-                # USE_COORDS = True
-                # self.use_coords = USE_COORDS
-                # self.embedding_conv_num = 2
-                # weight_nums = []
-                # bias_nums = []
-                # for i in range(self.embedding_conv_num):
-                #     if i ==0:
-                #         if USE_COORDS:
-                #             weight_nums.append((self.output_dim+3) * self.output_dim)
-                #         else:
-                #             weight_nums.append(self.output_dim * self.output_dim)
-                #         bias_nums.append(self.output_dim)
-                #     elif i == self.embedding_conv_num-1:
-                #         weight_nums.append(self.output_dim)
-                #         bias_nums.append(1)
-                #     else:
-                #         weight_nums.append(self.output_dim*self.output_dim)
-                #         bias_nums.append(self.output_dim)
-
-                # self.weight_nums = weight_nums
-                # self.bias_nums = bias_nums
-                # self.num_gen_params = sum(weight_nums) + sum(bias_nums)
-                # self.controller = nn.Conv1d(self.output_dim, self.num_gen_params, kernel_size=1)
-                # torch.nn.init.normal_(self.controller.weight, std=0.01)
-                # torch.nn.init.constant_(self.controller.bias, 0)
 
         self.init_weights()
 
@@ -119,6 +92,11 @@ class SoftGroup(nn.Module):
             mod = getattr(self, mod)
             for param in mod.parameters():
                 param.requires_grad = False
+
+        if 'input_conv' in self.fixed_modules and 'unet' in self.fixed_modules:
+            self.freeze_backbone = True
+        else:
+            self.freeze_backbone = False
 
     def init_weights(self):
         for m in self.modules():
@@ -157,9 +135,10 @@ class SoftGroup(nn.Module):
         semantic_scores, pt_offsets, output_feats = self.forward_backbone(input, v2p_map)
 
         # point wise losses
-        point_wise_loss = self.point_wise_loss(semantic_scores, pt_offsets, semantic_labels,
-                                               instance_labels, pt_offset_labels)
-        losses.update(point_wise_loss)
+        if not self.freeze_backbone:
+            point_wise_loss = self.point_wise_loss(semantic_scores, pt_offsets, semantic_labels,
+                                                instance_labels, pt_offset_labels)
+            losses.update(point_wise_loss)
 
         # instance losses
         if not self.semantic_only:
@@ -170,6 +149,7 @@ class SoftGroup(nn.Module):
                 proposals_offset = proposals_offset[:self.train_cfg.max_proposal_num + 1]
                 proposals_idx = proposals_idx[:proposals_offset[-1]]
                 assert proposals_idx.shape[0] == proposals_offset[-1]
+
             inst_feats, inst_map, inst_coords_mean = self.clusters_voxelization(
                 proposals_idx,
                 proposals_offset,
@@ -177,10 +157,12 @@ class SoftGroup(nn.Module):
                 coords_float,
                 rand_quantize=True,
                 **self.instance_voxel_cfg)
+
             instance_batch_idxs, cls_scores, iou_scores, mask_logits_dict, inst_idxs_dict = self.forward_instance(
-                inst_feats, inst_map, inst_coords_mean, batch_idxs, coords_float, output_feats, per_cls_object_idxs)
+                inst_feats, inst_map, inst_coords_mean, coords_float, output_feats, per_cls_object_idxs)
+
             instance_loss = self.instance_loss(cls_scores, mask_logits_dict, inst_idxs_dict, per_cls_object_idxs, iou_scores, proposals_idx,
-                                               proposals_offset, proposals_batch_idxs, instance_labels, instance_pointnum,
+                                               proposals_offset, proposals_batch_idxs, semantic_labels, instance_labels, instance_pointnum,
                                                instance_cls, instance_batch_idxs, batch_idxs)
             losses.update(instance_loss)
         return self.parse_losses(losses)
@@ -203,27 +185,30 @@ class SoftGroup(nn.Module):
 
     @force_fp32(apply_to=('cls_scores', 'mask_logits_dict', 'iou_scores'))
     def instance_loss(self, cls_scores, mask_logits_dict, inst_idxs_dict, per_cls_object_idxs, iou_scores, proposals_idx, proposals_offset, proposals_batch_idxs,
-                      instance_labels, instance_pointnum, instance_cls, instance_batch_idxs, batch_idxs):
+                      semantic_labels, instance_labels, instance_pointnum, instance_cls, instance_batch_idxs, batch_idxs):
         losses = {}
         proposals_idx = proposals_idx[:, 1].cuda()
         proposals_offset = proposals_offset.cuda()
 
         # cal iou of clustered instance
         ious_on_cluster = get_mask_iou_on_cluster(proposals_idx, proposals_offset, instance_labels,
-                                                  instance_pointnum)
+                                                  instance_pointnum) # N_inst_pred x N_inst_gt
 
 
         # filter out background instances
         # print('instance_cls', torch.unique(instance_cls))
-        fg_inds = (instance_cls != self.ignore_label)
+        # fg_inds = (instance_cls != self.ignore_label)
+        fg_inds = torch.nonzero(instance_cls != self.ignore_label).view(-1)
+
+        # print('instance_cls', instance_cls)
         fg_instance_cls = instance_cls[fg_inds]
-        fg_ious_on_cluster = ious_on_cluster[:, fg_inds]
+        fg_ious_on_cluster = ious_on_cluster[:, fg_inds] # N_inst_pred x N_fg_inst_gt
 
         # overlap > thr on fg instances are positive samples
-        max_iou, gt_inds = fg_ious_on_cluster.max(1)
+        max_iou, gt_inds = fg_ious_on_cluster.max(1) # N_inst_pred
         # pos_inds = max_iou >= self.train_cfg.pos_iou_thr
-        pos_inds = torch.nonzero(max_iou >= self.train_cfg.pos_iou_thr).view(-1)
-        pos_gt_inds = gt_inds[pos_inds]
+        pos_inds = torch.nonzero(max_iou >= self.train_cfg.pos_iou_thr).view(-1) # N_pos_inst_pred: inds of positive pred
+        pos_gt_inds = gt_inds[pos_inds] # # N_pos_inst_pred: corresponding fg_inst_gt index
 
         # compute cls loss. follow detection convention: 0 -> K - 1 are fg, K is bg
         labels = fg_instance_cls.new_full((fg_ious_on_cluster.size(0), ), self.instance_classes) # N_pred, 1
@@ -231,8 +216,10 @@ class SoftGroup(nn.Module):
 
         # print('labels', torch.unique(labels))
         cls_loss = F.cross_entropy(cls_scores, labels)
-        losses['cls_loss'] = cls_loss
 
+        # breakpoint()
+        losses['cls_loss'] = cls_loss
+        # return cls_loss
             # # compute mask loss
             # mask_cls_label = labels[instance_batch_idxs.long()] # Num_points: label for each point 
             # slice_inds = torch.arange(
@@ -250,9 +237,9 @@ class SoftGroup(nn.Module):
             # losses['mask_loss'] = mask_loss
 
         dice_loss = torch.tensor([0.0], dtype=torch.float, requires_grad=True).cuda()
-        mask_loss_total = torch.tensor([0.0], dtype=torch.float, requires_grad=True).cuda()
-
         valid_num_dice_loss = 0
+
+        mask_loss_total = torch.tensor([0.0], dtype=torch.float, requires_grad=True).cuda()
         mask_weight_total = 0
         # max_ious_on_cluster, inds_max_ious_on_cluster = ious_on_cluster.max(1)
 
@@ -265,6 +252,8 @@ class SoftGroup(nn.Module):
 
         for class_id in range(self.semantic_classes):
             if class_id in self.grouping_cfg.ignore_classes:
+                continue
+            if class_id not in mask_logits_dict:
                 continue
 
             mask_logits = mask_logits_dict[class_id] # N_inst, N_points_of_classX
@@ -285,24 +274,21 @@ class SoftGroup(nn.Module):
 
             gt_ious_ = torch.zeros((inst_idxs.shape[0])).cuda()
             gt_ious_mask_ = torch.zeros((inst_idxs.shape[0])).cuda()
+
+            # breakpoint()
             
             for n in range(inst_num):
-                # if max_ious_on_cluster[inst_idxs[n]] < self.train_cfg.pos_iou_thr or instance_cls[inds_max_ious_on_cluster[inst_idxs[n]]] == -100:
-                #     continue
-
                 if inst_idxs[n] not in pos_inds:
                     continue
 
                 inst_batch_idx = proposals_batch_idxs_[n]
                 
-                weights[n][batch_idxs_ == inst_batch_idx] = 1
-                mask_labels[n] = (instance_labels[object_idxs] == gt_inds[inst_idxs[n]])
+                weights[n] = (batch_idxs_ == inst_batch_idx).int()
 
-                # print('debug', torch.unique(instance_labels[object_idxs]), gt_inds[inst_idxs[n]], class_id-2, fg_instance_cls[gt_inds[inst_idxs[n]]])
+                corresponding_inst_label = fg_inds[gt_inds[inst_idxs[n]]] # get inst label of this inst_pred
+                mask_labels[n] = (instance_labels[object_idxs] == corresponding_inst_label)
 
                 valid_id = torch.nonzero(weights[n] > 0).view(-1)
-
-                # print(weights[n].sum(), mask_labels[n].sum())
                 
                 if valid_id.shape[0] > 0:
                     valid_mask_logits = mask_logits[n, valid_id].sigmoid().view(-1)
@@ -343,7 +329,7 @@ class SoftGroup(nn.Module):
             # iou_score_weight = (labels < self.instance_classes).float()
             # iou_score_slice = iou_scores[slice_inds, labels]
 
-        iou_score_loss = F.mse_loss(iou_scores.sigmoid(), gt_ious, reduction='none')
+        iou_score_loss = F.mse_loss(iou_scores, gt_ious, reduction='none')
         iou_score_loss = (iou_score_loss * gt_ious_mask).sum() / (gt_ious_mask.sum() + 1e-4)
         losses['iou_score_loss'] = iou_score_loss
         return losses
@@ -393,7 +379,7 @@ class SoftGroup(nn.Module):
                 rand_quantize=True,
                 **self.instance_voxel_cfg)
             instance_batch_idxs, cls_scores, iou_scores, mask_logits_dict, inst_idxs_dict = self.forward_instance(
-                inst_feats, inst_map, inst_coords_mean, batch_idxs, coords_float, output_feats, per_cls_object_idxs)
+                inst_feats, inst_map, inst_coords_mean, coords_float, output_feats, per_cls_object_idxs)
 
                 # proposals_idx, proposals_offset = self.forward_grouping(semantic_scores, pt_offsets,
                 #                                                         batch_idxs, coords_float,
@@ -409,11 +395,7 @@ class SoftGroup(nn.Module):
         return ret
 
     def forward_backbone(self, input, input_map, x4_split=False):
-        if 'input_conv' in self.fixed_modules and 'unet' in self.fixed_modules:
-            context = torch.no_grad
-        else:
-            context = torch.enable_grad
-
+        context = torch.no_grad if self.freeze_backbone else torch.enable_grad
         with context():
             if x4_split:
                 output_feats = self.forward_4_parts(input, input_map)
@@ -503,6 +485,8 @@ class SoftGroup(nn.Module):
             # proposals_batch_idxs = torch.zeros((proposals_offset-1)).int().cuda()
             proposals_batch_idxs = batch_idxs[proposals_idx[proposals_offset[:-1].long(), 1].long()]
 
+            # breakpoint()
+
             # merge proposals
             if len(proposals_offset_list) > 0:
                 proposals_idx[:, 0] += sum([x.size(0) for x in proposals_offset_list]) - 1
@@ -512,9 +496,11 @@ class SoftGroup(nn.Module):
                 proposals_idx_list.append(proposals_idx)
                 proposals_offset_list.append(proposals_offset)
                 proposals_batch_idxs_list.append(proposals_batch_idxs)
+
         proposals_idx = torch.cat(proposals_idx_list, dim=0)
         proposals_offset = torch.cat(proposals_offset_list)
         proposals_batch_idxs = torch.cat(proposals_batch_idxs_list, dim=0)
+
         return proposals_idx, proposals_offset, proposals_batch_idxs, per_cls_object_idxs
 
     def parse_dynamic_params(self, params, out_channels):
@@ -561,7 +547,7 @@ class SoftGroup(nn.Module):
         x = x.squeeze(0)
         return x
 
-    def forward_instance(self, inst_feats, inst_map, inst_coords_mean, batch_idxs, coords_float, output_feats, per_cls_object_idxs):
+    def forward_instance(self, inst_feats, inst_map, inst_coords_mean, coords_float, output_feats, per_cls_object_idxs):
 
         label_shift = (self.semantic_classes - self.instance_classes)
         feats = self.tiny_unet(inst_feats)
@@ -580,37 +566,35 @@ class SoftGroup(nn.Module):
 
         controller = self.controller(feats.unsqueeze(-1)).squeeze(-1) # N, num_params
 
-        inst_cls_pred = torch.argmax(cls_scores, dim=1)
+        inst_cls_pred = torch.max(cls_scores, dim=1)[1] # 0 -> 17
 
         mask_feats = self.mask_tower(output_feats.unsqueeze(-1).permute(2,1,0)).permute(2,1,0)
 
         # final_proposals_idx_list = []
         # final_proposals_offset_list = []
-        mask_logits_dict = {c: None for c in range(self.semantic_classes)}
-        inst_idxs_dict = {c: None for c in range(self.semantic_classes)}
+        mask_logits_dict = {}
+        inst_idxs_dict = {}
         for class_id in range(self.semantic_classes):
             if class_id in self.grouping_cfg.ignore_classes:
                 continue
 
             object_idxs = per_cls_object_idxs[class_id]
 
-            # batch_idxs_ = batch_idxs[object_idxs]
-            # batch_offsets_ = self.get_batch_offsets(batch_idxs_, batch_size)
-            coords_ = coords_float[object_idxs]
+            coords_ = coords_float[object_idxs, :]
 
-            mask_feats_ = mask_feats[object_idxs]
+            mask_feats_ = mask_feats[object_idxs, :]
 
             inst_idxs = torch.nonzero(inst_cls_pred == (class_id - label_shift)).view(-1)
 
             if inst_idxs.shape[0] == 0 or object_idxs.shape[0] == 0:
                 continue
 
-            # print(f'{class_id}, {inst_idxs.shape[0]}, {object_idxs.shape[0]}')
 
-            controller_ = controller[inst_idxs]
-            weight_params_, bias_params_ = self.parse_dynamic_params(controller_, self.channels//2)
+            controller_ = controller[inst_idxs, :]
+            weight_params_, bias_params_ = self.parse_dynamic_params(controller_, self.channels)
 
             inst_coords_mean_ = inst_coords_mean[inst_idxs]
+
 
             mask_logits = self.dyco_head(mask_feats_, weight_params_, bias_params_, inst_coords_mean_, coords_) # N_inst_of_classX, N_points_of_classX
             mask_logits_dict[class_id] = mask_logits
@@ -662,27 +646,33 @@ class SoftGroup(nn.Module):
         #     mask_pred_list.append(mask_pred)
 
         label_shift = self.semantic_classes - self.instance_classes
-        for class_id in range(self.semantic_classes):
+        for class_id in range(self.semantic_classes): # 0->19
             if class_id in self.grouping_cfg.ignore_classes:
                 continue
-            if mask_logits_dict[class_id] is None:
+            if class_id not in mask_logits_dict:
                 continue
             
             
 
-            object_idxs = per_cls_object_idxs[class_id]
-            inst_idxs = inst_idxs_dict[class_id]
-            
-            cur_cls_scores = cls_scores[inst_idxs, class_id-label_shift]
-            cur_iou_scores = iou_scores[inst_idxs]
+            object_idxs = per_cls_object_idxs[class_id] # fg points
+            inst_idxs = inst_idxs_dict[class_id] # fg inst
             cur_mask_scores = mask_logits_dict[class_id]
+
+            # cur_cls_scores = cls_scores[inst_idxs, class_id-label_shift]
+
+            cur_cls_scores, cur_cls_inds = torch.max(cls_scores[inst_idxs], dim=1)
+            assert torch.all(cur_cls_inds == class_id-label_shift)
+
+            cur_iou_scores = iou_scores[inst_idxs]
+            
 
             num_instances = inst_idxs.shape[0]
 
             cls_pred = cur_cls_scores.new_full((num_instances, ), class_id-label_shift+1, dtype=torch.long)
 
-            # score_pred = cur_cls_scores * cur_iou_scores.clamp(0, 1)
-            score_pred = cur_cls_scores.sigmoid() * cur_iou_scores.sigmoid()
+            score_pred = cur_cls_scores * cur_iou_scores.clamp(0, 1)
+            # score_pred = cur_cls_scores
+            # score_pred = cur_cls_scores.sigmoid() * cur_iou_scores.sigmoid()
 
             mask_pred = torch.zeros((num_instances, num_points), dtype=torch.int, device='cuda')
             mask_inds = (cur_mask_scores > self.test_cfg.mask_score_thr).type(torch.int)
@@ -721,6 +711,7 @@ class SoftGroup(nn.Module):
             instances.append(pred)
         return instances
 
+
     def get_gt_instances(self, semantic_labels, instance_labels):
         """Get gt instances for evaluation."""
         # convert to evaluation format 0: ignore, 1->N: valid
@@ -751,6 +742,8 @@ class SoftGroup(nn.Module):
 
         clusters_offset_cuda = clusters_offset.cuda()
         coords_mean = sec_mean(coords, clusters_offset_cuda) 
+
+        # breakpoint()
 
         coords_min = sec_min(coords, clusters_offset_cuda)
         coords_max = sec_max(coords, clusters_offset_cuda)
