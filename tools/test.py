@@ -24,6 +24,7 @@ def get_args():
     parser.add_argument('checkpoint', type=str, help='path to checkpoint')
     parser.add_argument('--dist', action='store_true', help='run with distributed parallel')
     parser.add_argument('--out', type=str, help='directory for output results')
+    parser.add_argument('--save_lite', action='store_true')
     args = parser.parse_args()
     return args
 
@@ -97,12 +98,18 @@ def main():
     with torch.no_grad():
         model.eval()
         for i, batch in enumerate(dataloader):
+            if args.save_lite and i % 10 != 0:
+                continue
+
+            # print(i)
             result = model(batch)
             results.append(result)
             progress_bar.update(world_size)
         progress_bar.close()
         results = collect_results_gpu(results, len(dataset))
     if is_main_process():
+        # if args.save_lite:
+        #     results[0:300:10]
         for res in results:
             scan_ids.append(res['scan_id'])
             coords.append(res['coords_float'])
@@ -128,16 +135,16 @@ def main():
         if not args.out:
             return
         logger.info('Save results')
-        save_npy(args.out, 'coords', scan_ids, coords)
+        # save_npy(args.out, 'coords', scan_ids, coords)
         if cfg.save_cfg.semantic:
             save_npy(args.out, 'semantic_pred', scan_ids, sem_preds)
-            save_npy(args.out, 'semantic_label', scan_ids, sem_labels)
+            # save_npy(args.out, 'semantic_label', scan_ids, sem_labels)
         if cfg.save_cfg.offset:
             save_npy(args.out, 'offset_pred', scan_ids, offset_preds)
-            save_npy(args.out, 'offset_label', scan_ids, offset_labels)
+            # save_npy(args.out, 'offset_label', scan_ids, offset_labels)
         if cfg.save_cfg.instance:
             save_pred_instances(args.out, 'pred_instance', scan_ids, pred_insts)
-            save_gt_instances(args.out, 'gt_instance', scan_ids, gt_insts)
+            # save_gt_instances(args.out, 'gt_instance', scan_ids, gt_insts)
 
 
 if __name__ == '__main__':
