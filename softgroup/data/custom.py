@@ -25,7 +25,8 @@ class CustomDataset(Dataset):
                  logger=None,
                  limit_anno=False,
                  limit_type=None,
-                 extend_by_euclidean=False):
+                 extend_by_euclidean=False,
+                 consist=True):
         self.data_root = data_root
         self.prefix = prefix
         self.suffix = suffix
@@ -39,6 +40,7 @@ class CustomDataset(Dataset):
         self.limit_anno = limit_anno
         self.limit_type = limit_type
         self.extend_by_euclidean = extend_by_euclidean
+        self.consist = consist
         if self.limit_anno:
             self.limit_points_dict = torch.load(osp.join(self.data_root, 'points', self.limit_type))
 
@@ -271,39 +273,72 @@ class CustomDataset(Dataset):
         feats = []
         semantic_labels = []
 
+        batch_offsets = [0]
+
         batch_id = 0
-        for data in batch:
-            if data is None:
-                continue
-            (scan_id, coord, coord_float, feat, semantic_label) = data
-            scan_ids.append(scan_id)
-            coords.append(torch.cat([coord.new_full((coord.size(0), coord.size(1), 1), batch_id), coord], 2))
-            coords_float.append(coord_float)
-            feats.append(feat)
-            semantic_labels.append(semantic_label)
-            batch_id += 1
-        assert batch_id > 0, 'empty batch'
+
+        for i in range(2):
+            for data in batch:
+                if data is None:
+                    continue
+                (scan_id, coord, coord_float, feat, semantic_label) = data # (2, N, c)
+
+                
+                scan_ids.append(scan_id)
+
+                coords.append(torch.cat([coord.new_full((coord[i].size(0), 1), batch_id), coord[i]], 1))
+                coords_float.append(coord_float[i])
+                feats.append(feat[i])
+                semantic_labels.append(semantic_label[i])
+                batch_id += 1
+                batch_offsets.append(batch_offsets[-1] + semantic_label[i].shape[0])
+
+            if not self.consist:
+                break
+
+                    # coords.append(torch.cat([coord.new_full((coord.size(0), coord.size(1), 1), batch_id), coord], 2))
+                    # coords_float.append(coord_float)
+                    # feats.append(feat)
+                    # semantic_labels.append(semantic_label)
+                    # batch_id += 1
+                    # batch_offsets.append(torch.tensor([batch_offsets[-1][0] + semantic_label[0].shape[0], batch_offsets[-1][1] + semantic_label[1].shape[0]]))
+        assert batch_id > 0 and batch_id % 2 == 0, 'empty batch'
         if batch_id < len(batch):
             self.logger.info(f'batch is truncated from size {len(batch)} to {batch_id}')
 
+            # # merge all the scenes in the batch
+            # coords = torch.cat(coords, 1)  # long (2, N, 1 + 3), the batch item idx is put in coords[:, 0]
+            # batch_idxs = coords[..., 0].int() # (2, N)
+            # coords_float = torch.cat(coords_float, 1).to(torch.float32)  # float (N, 3)
+            # feats = torch.cat(feats, 1)  # float (N, C)
+            # semantic_labels = torch.cat(semantic_labels, 1).long()  # long (N)
+            # batch_offsets = torch.stack(batch_offsets, dim=-1) # B+1, 2
+
+
+            # spatial_shape1 = np.clip(
+            #     coords[0].max(0)[0][1:].numpy() + 1, self.voxel_cfg.spatial_shape[0], None)
+            # spatial_shape2 = np.clip(
+            #     coords[1].max(0)[0][1:].numpy() + 1, self.voxel_cfg.spatial_shape[0], None)
+
+            # voxel_coords1, v2p_map1, p2v_map1 = voxelization_idx(coords[0], batch_id)
+            # voxel_coords2, v2p_map2, p2v_map2 = voxelization_idx(coords[1], batch_id)
+            # voxel_coords = [voxel_coords1, voxel_coords2]
+            # p2v_map = [p2v_map1, p2v_map2]
+            # v2p_map = [v2p_map1, v2p_map2]
+            # spatial_shape = [spatial_shape1, spatial_shape2]
+
         # merge all the scenes in the batch
-        coords = torch.cat(coords, 1)  # long (N, 1 + 3), the batch item idx is put in coords[:, 0]
-        batch_idxs = coords[:, 1].int()
-        coords_float = torch.cat(coords_float, 1).to(torch.float32)  # float (N, 3)
-        feats = torch.cat(feats, 1)  # float (N, C)
-        semantic_labels = torch.cat(semantic_labels, 1).long()  # long (N)
+        coords = torch.cat(coords, 0)  # long (N, 1 + 3), the batch item idx is put in coords[:, 0]
+        batch_idxs = coords[:, 0].int()
+        coords_float = torch.cat(coords_float, 0).to(torch.float32)  # float (N, 3)
+        feats = torch.cat(feats, 0)  # float (N, C)
+        semantic_labels = torch.cat(semantic_labels, 0).long()  # long (N)
 
-        spatial_shape1 = np.clip(
-            coords[0].max(0)[0][1:].numpy() + 1, self.voxel_cfg.spatial_shape[0], None)
-        spatial_shape2 = np.clip(
-            coords[1].max(0)[0][1:].numpy() + 1, self.voxel_cfg.spatial_shape[0], None)
+        batch_offsets = torch.tensor(batch_offsets, dtype=torch.int)# B+1s
 
-        voxel_coords1, v2p_map1, p2v_map1 = voxelization_idx(coords[0], batch_id)
-        voxel_coords2, v2p_map2, p2v_map2 = voxelization_idx(coords[1], batch_id)
-        voxel_coords = [voxel_coords1, voxel_coords2]
-        p2v_map = [p2v_map1, p2v_map2]
-        v2p_map = [v2p_map1, v2p_map2]
-        spatial_shape = [spatial_shape1, spatial_shape2]
+        spatial_shape = np.clip(
+            coords.max(0)[0][1:].numpy() + 1, self.voxel_cfg.spatial_shape[0], None)
+        voxel_coords, v2p_map, p2v_map = voxelization_idx(coords, batch_id)
 
         return {
             'scan_ids': scan_ids,
@@ -317,6 +352,7 @@ class CustomDataset(Dataset):
             'semantic_labels': semantic_labels,
             'spatial_shape': spatial_shape,
             'batch_size': batch_id,
+            'batch_offsets': batch_offsets,
         }
 
     def collate_fn_test(self, batch):
@@ -325,6 +361,7 @@ class CustomDataset(Dataset):
         coords_float = []
         feats = []
         semantic_labels = []
+        batch_offsets = [0]
 
         batch_id = 0
         for data in batch:
@@ -337,6 +374,7 @@ class CustomDataset(Dataset):
             feats.append(feat)
             semantic_labels.append(semantic_label)
             batch_id += 1
+            batch_offsets.append(batch_offsets[-1] + semantic_label.shape[0])
         assert batch_id > 0, 'empty batch'
         if batch_id < len(batch):
             self.logger.info(f'batch is truncated from size {len(batch)} to {batch_id}')
@@ -347,6 +385,8 @@ class CustomDataset(Dataset):
         coords_float = torch.cat(coords_float, 0).to(torch.float32)  # float (N, 3)
         feats = torch.cat(feats, 0)  # float (N, C)
         semantic_labels = torch.cat(semantic_labels, 0).long()  # long (N)
+
+        batch_offsets = torch.tensor(batch_offsets, dtype=torch.int) # B+1s
 
         spatial_shape = np.clip(
             coords.max(0)[0][1:].numpy() + 1, self.voxel_cfg.spatial_shape[0], None)
@@ -363,4 +403,5 @@ class CustomDataset(Dataset):
             'semantic_labels': semantic_labels,
             'spatial_shape': spatial_shape,
             'batch_size': batch_id,
+            'batch_offsets': batch_offsets,
         }

@@ -18,3 +18,6 @@ CUDA_VISIBLE_DEVICES=5 python3 tools/train.py configs/softgroup_scannet_only_sem
 
 
 CUDA_VISIBLE_DEVICES=5,7 python -m torch.distributed.launch --nproc_per_node=2 --master_port=$((RANDOM + 10000)) tools/train.py --dist configs/softgroup_scannet_only_semantic_points20_pointmatch.yaml 
+
+
+CUDA_VISIBLE_DEVICES=6,7 python -m torch.distributed.launch --nproc_per_node=2 --master_port=$((RANDOM + 10000)) tools/train.py --dist configs/softgroup_scannet_only_semantic_points20_pointmatch_group.yaml 

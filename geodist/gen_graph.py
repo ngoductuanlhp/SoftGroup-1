@@ -10,9 +10,13 @@ import argparse
 import os
 import torch
 import glob
+
+import multiprocessing as mp
 np.random.seed(1234)
 
-
+train_folder = '/home/ubuntu/fewshot3d_ws/SoftGroup/dataset/scannetv2/train'
+save_folder = '/home/ubuntu/fewshot3d_ws/SoftGroup/dataset/scannetv2/graph'
+os.makedirs(save_folder, exist_ok=True)
 
 def farthest_point_sample(xyz, npoint):
     """
@@ -38,10 +42,15 @@ def farthest_point_sample(xyz, npoint):
         farthest = np.argmax(distance, -1)
     return centroids
 
-def main():
-    res = faiss.StandardGpuResources()  # use a single GPU
-    # index_flat = faiss.IndexFlatL2(3)  # build a flat (CPU) index
-    geo_knn = faiss.index_cpu_to_gpu(res, 0, faiss.IndexFlatL2(3))
+def gen_graph(input_file, geo_knn):
+    # print(input_file)
+    scene_name = os.path.basename(input_file)[:12]
+    saved_path = os.path.join(save_folder, scene_name + '.pkl')
+    if os.path.exists(saved_path):
+        return
+
+    
+    # geo_knn = faiss.IndexFlatL2(3)
 
 
     radius = 0.02
