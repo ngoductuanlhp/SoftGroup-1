@@ -25,10 +25,10 @@ model:
     pos_iou_thr: 0.5
   test_cfg:
     x4_split: False
-    cls_score_thr: 0.001
-    mask_score_thr: -0.5
-    # cls_score_thr: 0.05
-    # mask_score_thr: 0
+    # cls_score_thr: 0.001
+    # mask_score_thr: -0.5
+    cls_score_thr: 0.05
+    mask_score_thr: 0
     min_npoint: 100
   fixed_modules: ['input_conv', 'unet', 'output_layer', 'semantic_linear', 'offset_linear']
   # fixed_modules: []
