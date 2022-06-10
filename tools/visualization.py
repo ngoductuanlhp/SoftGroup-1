@@ -4,7 +4,7 @@ from operator import itemgetter
 
 import numpy as np
 import torch
-
+import math
 # yapf:disable
 COLOR_DETECTRON2 = np.array(
     [
@@ -159,6 +159,13 @@ def get_coords_color(opt):
 
     rgb = (rgb + 1) * 127.5
 
+    m = np.eye(3)
+    theta = 0.35 * math.pi
+    m = np.matmul(m, [[math.cos(theta), math.sin(theta), 0],
+                        [-math.sin(theta), math.cos(theta), 0], [0, 0, 1]])
+
+    xyz = np.matmul(xyz, m)
+
     if (opt.task == 'semantic_gt'):
         assert opt.data_split != 'test'
         label = label.astype(np.int)
@@ -169,7 +176,7 @@ def get_coords_color(opt):
 
     elif (opt.task == 'semantic_pred'):
         assert opt.data_split != 'train'
-        semantic_file = os.path.join(opt.prediction_path, opt.data_split, 'semantic',
+        semantic_file = os.path.join(opt.prediction_path, 'semantic_pred',
                                      opt.room_name + '.npy')
         assert os.path.isfile(semantic_file), 'No semantic result - {}.'.format(semantic_file)
         label_pred = np.load(semantic_file).astype(np.int)  # 0~19
@@ -178,18 +185,21 @@ def get_coords_color(opt):
 
     elif (opt.task == 'offset_semantic_pred'):
         assert opt.data_split != 'train'
-        semantic_file = os.path.join(opt.prediction_path, opt.data_split, 'semantic',
+        semantic_file = os.path.join(opt.prediction_path, 'semantic_pred',
                                      opt.room_name + '.npy')
         assert os.path.isfile(semantic_file), 'No semantic result - {}.'.format(semantic_file)
         label_pred = np.load(semantic_file).astype(np.int)  # 0~19
         label_pred_rgb = np.array(itemgetter(*SEMANTIC_NAMES[label_pred])(CLASS_COLOR))
         rgb = label_pred_rgb
 
-        offset_file = os.path.join(opt.prediction_path, opt.data_split, 'coords_offsets',
+        offset_file = os.path.join(opt.prediction_path, 'offset_pred',
                                    opt.room_name + '.npy')
         assert os.path.isfile(offset_file), 'No offset result - {}.'.format(offset_file)
         offset_coords = np.load(offset_file)
-        xyz = offset_coords[:, :3] + offset_coords[:, 3:]
+
+        # xyz = offset_coords[:, :3] + offset_coords[:, 3:]
+        # xyz[label_pred > 1] += offset_coords[label_pred > 1]
+        xyz += offset_coords
 
     # same color order according to instance pointnum
     elif (opt.task == 'instance_gt'):
@@ -210,13 +220,15 @@ def get_coords_color(opt):
     # same color order according to instance pointnum
     elif (opt.task == 'instance_pred'):
         assert opt.data_split != 'train'
-        instance_file = os.path.join(opt.prediction_path, opt.data_split, opt.room_name + '.txt')
+        instance_file = os.path.join(opt.prediction_path, 'pred_instance', opt.room_name + '.txt')
         assert os.path.isfile(instance_file), 'No instance result - {}.'.format(instance_file)
         f = open(instance_file, 'r')
         masks = f.readlines()
         masks = [mask.rstrip().split() for mask in masks]
         inst_label_pred_rgb = np.zeros(rgb.shape)  # np.ones(rgb.shape) * 255 #
 
+        # FIXME 
+        # masks = masks[24:30]
         ins_num = len(masks)
         ins_pointnum = np.zeros(ins_num)
         inst_label = -100 * np.ones(rgb.shape[0]).astype(np.int)
@@ -226,7 +238,7 @@ def get_coords_color(opt):
         sort_inds = np.argsort(scores)[::-1]
         for i_ in range(len(masks) - 1, -1, -1):
             i = sort_inds[i_]
-            mask_path = os.path.join(opt.prediction_path, opt.data_split, masks[i][0])
+            mask_path = os.path.join(opt.prediction_path, 'pred_instance', masks[i][0])
             assert os.path.isfile(mask_path), mask_path
             if (float(masks[i][2]) < 0.09):
                 continue
@@ -286,9 +298,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
         '--dataset',
-        choices=['scannet', 's3dis'],
+        choices=['scannetv2', 's3dis'],
         help='dataset for visualization',
-        default='scannet')
+        default='scannetv2')
     parser.add_argument(
         '--prediction_path',
         help='path to the prediction results',
@@ -300,7 +312,7 @@ if __name__ == '__main__':
         '--task',
         help='input/semantic_gt/semantic_pred/offset_semantic_pred/instance_gt/instance_pred',
         default='instance_pred')
-    parser.add_argument('--out', help='output point cloud file in FILE.ply format')
+    parser.add_argument('--out', default='', help='output point cloud file in FILE.ply format')
     opt = parser.parse_args()
 
     xyz, rgb = get_coords_color(opt)
