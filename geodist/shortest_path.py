@@ -11,11 +11,11 @@ import os
 import argparse
 
 try:
-    with open('graph_test.pkl', 'rb') as handle:
+    with open('../pretrains/graph_test.pkl', 'rb') as handle:
         saved_dict = pickle.load(handle)
 except:
     import pickle5 as pickle
-    with open('graph_test.pkl', 'rb') as handle:
+    with open('../pretrains/graph_test.pkl', 'rb') as handle:
         saved_dict = pickle.load(handle)
 
 edges = saved_dict['edges']
@@ -34,7 +34,7 @@ gdf["data"] = edges[:, 2]
 # print(np.max(edges[:, 0]), np.max(edges[:, 1]))
 num_vertice = len(np.unique(edges[:, 0:2]))
 # st = time.time()
-G = cugraph.Graph()
+G = cugraph.Graph(symmetrized=True)
 
 # print('edges', edges.shape, edges[:10, :])
 G.from_cudf_edgelist(gdf, source='src', destination='dst', edge_attr='data')
@@ -66,6 +66,6 @@ for i, ind in enumerate(pivots_inds):
         'dis': dis,
     }
 
-save_scene_path = os.path.join('path_test.pkl')
+save_scene_path = os.path.join('../pretrains/path_test.pkl')
 with open(save_scene_path, 'wb') as handle:
     pickle.dump(geo_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
