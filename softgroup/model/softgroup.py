@@ -214,7 +214,7 @@ class SoftGroup(nn.Module):
                 **self.instance_voxel_cfg)
 
             instance_batch_idxs, cls_scores, iou_scores, mask_logits_dict, inst_idxs_dict = self.forward_instance(
-                inst_feats, inst_map, inst_coords_mean, coords_float, output_feats, per_cls_object_idxs)
+                inst_feats, inst_map, inst_coords_mean, coords_float, pt_offsets, output_feats, per_cls_object_idxs)
 
             instance_loss = self.instance_loss(cls_scores, mask_logits_dict, inst_idxs_dict, per_cls_object_idxs, iou_scores, proposals_idx,
                                                proposals_offset, proposals_batch_idxs, semantic_labels, instance_labels, instance_pointnum,
@@ -437,7 +437,7 @@ class SoftGroup(nn.Module):
                 rand_quantize=True,
                 **self.instance_voxel_cfg)
             instance_batch_idxs, cls_scores, iou_scores, mask_logits_dict, inst_idxs_dict = self.forward_instance(
-                inst_feats, inst_map, inst_coords_mean, coords_float, output_feats, per_cls_object_idxs)
+                inst_feats, inst_map, inst_coords_mean, coords_float, pt_offsets, output_feats, per_cls_object_idxs)
 
                 # proposals_idx, proposals_offset = self.forward_grouping(semantic_scores, pt_offsets,
                 #                                                         batch_idxs, coords_float,
@@ -609,7 +609,7 @@ class SoftGroup(nn.Module):
         x = x.squeeze(0)
         return x
 
-    def forward_instance(self, inst_feats, inst_map, inst_coords_mean, coords_float, output_feats, per_cls_object_idxs):
+    def forward_instance(self, inst_feats, inst_map, inst_coords_mean, coords_float, pt_offsets, output_feats, per_cls_object_idxs):
 
         label_shift = (self.semantic_classes - self.instance_classes)
         feats = self.tiny_unet(inst_feats)
@@ -647,6 +647,8 @@ class SoftGroup(nn.Module):
 
             mask_feats_ = mask_feats[object_idxs, :]
 
+            pt_offsets_ = pt_offsets[object_idxs, :]
+
             scores = cls_scores_softmax[:, class_id-label_shift].contiguous()
             inst_idxs = torch.nonzero(scores > self.grouping_cfg.score_thr).view(-1)
             # inst_idxs = torch.nonzero(inst_cls_pred == (class_id - label_shift)).view(-1)
@@ -661,7 +663,7 @@ class SoftGroup(nn.Module):
             inst_coords_mean_ = inst_coords_mean[inst_idxs]
 
 
-            mask_logits = self.dyco_head(mask_feats_, weight_params_, bias_params_, inst_coords_mean_, coords_) # N_inst_of_classX, N_points_of_classX
+            mask_logits = self.dyco_head(mask_feats_, weight_params_, bias_params_, inst_coords_mean_, coords_ + pt_offsets_) # N_inst_of_classX, N_points_of_classX
             mask_logits_dict[class_id] = mask_logits
             inst_idxs_dict[class_id] = inst_idxs
         # print('inst_idxs_dict', inst_idxs_dict)

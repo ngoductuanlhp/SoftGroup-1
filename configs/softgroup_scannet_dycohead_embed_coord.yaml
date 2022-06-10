@@ -80,5 +80,5 @@ fp16: True
 epochs: 40
 step_epoch: 20
 save_freq: 4
-pretrain: './work_dirs/softgroup_scannet/best.pth'
+pretrain: './pretrains/softgroup_scannet_best.pth'
 work_dir: ''
