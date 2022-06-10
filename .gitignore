@@ -72,6 +72,7 @@ dataset/scannetv2/test
 dataset/scannetv2/val_gt
 dataset/scannetv2/scannetv2-labels.combined.tsv
 dataset/scannetv2/points
+dataset/scannetv2/graph
 
 dataset/s3dis/preprocess
 dataset/s3dis/val_gt
