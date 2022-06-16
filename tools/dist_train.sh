@@ -14,4 +14,4 @@ CUDA_VISIBLE_DEVICES=1,2,3 python -m torch.distributed.launch --nproc_per_node=3
 
 CUDA_VISIBLE_DEVICES=1,2 OMP_NUM_THREADS=1 torchrun --nproc_per_node=2 --master_port=$((RANDOM + 10000)) tools/train.py --dist configs/softgroup_scannet_dycohead.yaml 
 
-CUDA_VISIBLE_DEVICES=3,4 OMP_NUM_THREADS=1 torchrun --nproc_per_node=2 --master_port=$((RANDOM + 10000)) tools/train.py --dist configs/softgroup_scannet_dycohead_embed_coord.yaml 
+CUDA_VISIBLE_DEVICES=5,6 OMP_NUM_THREADS=1 torchrun --nproc_per_node=2 --master_port=$((RANDOM + 10000)) tools/train.py --dist configs/softgroup_scannet_dycohead_embed_coord.yaml 

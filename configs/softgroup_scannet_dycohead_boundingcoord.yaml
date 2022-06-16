@@ -32,7 +32,7 @@ model:
     min_npoint: 100
   fixed_modules: ['input_conv', 'unet', 'output_layer', 'semantic_linear', 'offset_linear']
   # fixed_modules: []
-  embedding_relative_coord: True
+  embedding_relative_coord: False
 
 data:
   train:

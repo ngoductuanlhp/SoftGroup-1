@@ -127,12 +127,14 @@ class SoftGroup(nn.Module):
             ### convolution before the condinst take place (convolution num before the generated parameters take place)
             conv_block = conv_with_kaiming_uniform("BN", activation=True)
 
-            if self.embedding_relative_coord:
-                n_freqs = 4
-                self.pos_embed = PositionalEmbedding(3, n_freqs)
-                in_channels = channels + self.pos_embed.out_channels
-            else:
-                in_channels = (channels + 3)
+                # if self.embedding_relative_coord:
+                #     n_freqs = 4
+                #     self.pos_embed = PositionalEmbedding(3, n_freqs)
+                #     in_channels = channels + self.pos_embed.out_channels
+                # else:
+                #     in_channels = (channels + 3)
+
+            in_channels = channels + 3*9
 
             self.weight_nums = [in_channels * (channels), (channels) * 1]
             self.bias_nums = [(channels), 1]
@@ -205,16 +207,17 @@ class SoftGroup(nn.Module):
                 proposals_idx = proposals_idx[:proposals_offset[-1]]
                 assert proposals_idx.shape[0] == proposals_offset[-1]
 
-            inst_feats, inst_map, inst_coords_mean = self.clusters_voxelization(
+            inst_feats, inst_map, inst_coords_mean, coords_bounding = self.clusters_voxelization(
                 proposals_idx,
                 proposals_offset,
                 output_feats,
                 coords_float,
+                pt_offsets,
                 rand_quantize=True,
                 **self.instance_voxel_cfg)
 
             instance_batch_idxs, cls_scores, iou_scores, mask_logits_dict, inst_idxs_dict = self.forward_instance(
-                inst_feats, inst_map, inst_coords_mean, coords_float, pt_offsets, output_feats, per_cls_object_idxs)
+                inst_feats, inst_map, inst_coords_mean, coords_bounding, coords_float, pt_offsets, output_feats, per_cls_object_idxs)
 
             instance_loss = self.instance_loss(cls_scores, mask_logits_dict, inst_idxs_dict, per_cls_object_idxs, iou_scores, proposals_idx,
                                                proposals_offset, proposals_batch_idxs, semantic_labels, instance_labels, instance_pointnum,
@@ -429,15 +432,16 @@ class SoftGroup(nn.Module):
             proposals_idx, proposals_offset, proposals_batch_idxs, per_cls_object_idxs = self.forward_grouping(semantic_scores, pt_offsets,
                                                                     batch_idxs, coords_float,
                                                                     self.grouping_cfg)
-            inst_feats, inst_map, inst_coords_mean = self.clusters_voxelization(
+            inst_feats, inst_map, inst_coords_mean, coords_bounding = self.clusters_voxelization(
                 proposals_idx,
                 proposals_offset,
                 output_feats,
                 coords_float,
+                pt_offsets,
                 rand_quantize=True,
                 **self.instance_voxel_cfg)
             instance_batch_idxs, cls_scores, iou_scores, mask_logits_dict, inst_idxs_dict = self.forward_instance(
-                inst_feats, inst_map, inst_coords_mean, coords_float, pt_offsets, output_feats, per_cls_object_idxs)
+                inst_feats, inst_map, inst_coords_mean, coords_bounding, coords_float, pt_offsets, output_feats, per_cls_object_idxs)
 
                 # proposals_idx, proposals_offset = self.forward_grouping(semantic_scores, pt_offsets,
                 #                                                         batch_idxs, coords_float,
@@ -583,7 +587,7 @@ class SoftGroup(nn.Module):
 
         return weight_splits, bias_splits
 
-    def dyco_head(self, mask_features, weights, biases, inst_coords_mean_, coords_, use_coords=True):
+    def dyco_head(self, mask_features, weights, biases, inst_coords_mean_, coords_bounding_, coords_, use_coords=True):
         num_insts = inst_coords_mean_.shape[0]
         assert mask_features.dim() == 3
         n_layers = len(weights)
@@ -591,13 +595,20 @@ class SoftGroup(nn.Module):
         n_mask = mask_features.size(0)
         x = mask_features.permute(2,1,0).repeat(num_insts, 1, 1) ### num_inst * c * N_mask
 
-        relative_coords = inst_coords_mean_.reshape(-1, 1, 3) - coords_.reshape(1, -1, 3) ### N_inst * N_mask * 3
+            # if self.embedding_relative_coord:
+            #     inst_coords_mean_ = self.pos_embed(inst_coords_mean_)
+            #     coords_ = self.pos_embed(coords_)
+            #     # relative_coords = self.pos_embed(relative_coords.reshape(-1,3)).reshape(num_insts, n_mask, -1)
 
-        if self.embedding_relative_coord:
-            relative_coords = self.pos_embed(relative_coords.reshape(-1,3)).reshape(num_insts, n_mask, -1)
+            # relative_coords = inst_coords_mean_[:, None, :] - coords_[None, :, :] ### N_inst * N_mask * 3
+            # relative_coords = relative_coords.permute(0,2,1) ### num_inst * 3 * n_mask
 
+        relative_coords = coords_bounding_[:, None, :] - coords_[None, :, :].repeat(1,1,9) ### N_inst * N_mask * 3
         relative_coords = relative_coords.permute(0,2,1) ### num_inst * 3 * n_mask
 
+
+        # breakpoint()
+        # print(relative_coords.shape, x.shape, coords_.shape, inst_coords_mean_.shape)
         if use_coords:
             x = torch.cat([relative_coords, x], dim=1) ### num_inst * (3+c) * N_mask
 
@@ -609,7 +620,7 @@ class SoftGroup(nn.Module):
         x = x.squeeze(0)
         return x
 
-    def forward_instance(self, inst_feats, inst_map, inst_coords_mean, coords_float, pt_offsets, output_feats, per_cls_object_idxs):
+    def forward_instance(self, inst_feats, inst_map, inst_coords_mean, coords_bounding, coords_float, pt_offsets, output_feats, per_cls_object_idxs):
 
         label_shift = (self.semantic_classes - self.instance_classes)
         feats = self.tiny_unet(inst_feats)
@@ -661,9 +672,9 @@ class SoftGroup(nn.Module):
             weight_params_, bias_params_ = self.parse_dynamic_params(controller_, self.channels)
 
             inst_coords_mean_ = inst_coords_mean[inst_idxs]
+            coords_bounding_ = coords_bounding[inst_idxs]
 
-
-            mask_logits = self.dyco_head(mask_feats_, weight_params_, bias_params_, inst_coords_mean_, coords_ + pt_offsets_) # N_inst_of_classX, N_points_of_classX
+            mask_logits = self.dyco_head(mask_feats_, weight_params_, bias_params_, inst_coords_mean_, coords_bounding_, coords_) # N_inst_of_classX, N_points_of_classX
             mask_logits_dict[class_id] = mask_logits
             inst_idxs_dict[class_id] = inst_idxs
         # print('inst_idxs_dict', inst_idxs_dict)
@@ -793,12 +804,26 @@ class SoftGroup(nn.Module):
         gt_ins = gt_ins.cpu().numpy()
         return gt_ins
 
+    def get_bounding_vertices(self, coords_min, coords_max, coords_mean):
+        c1 = torch.cat([coords_min[:, [0]], coords_min[:, [1]], coords_min[:, [2]]], 1)
+        c2 = torch.cat([coords_min[:, [0]], coords_min[:, [1]], coords_max[:, [2]]], 1)
+        c3 = torch.cat([coords_min[:, [0]], coords_max[:, [1]], coords_min[:, [2]]], 1)
+        c4 = torch.cat([coords_min[:, [0]], coords_max[:, [1]], coords_max[:, [2]]], 1)
+        c5 = torch.cat([coords_max[:, [0]], coords_min[:, [1]], coords_min[:, [2]]], 1)
+        c6 = torch.cat([coords_max[:, [0]], coords_min[:, [1]], coords_max[:, [2]]], 1)
+        c7 = torch.cat([coords_max[:, [0]], coords_max[:, [1]], coords_min[:, [2]]], 1)
+        c8 = torch.cat([coords_max[:, [0]], coords_max[:, [1]], coords_max[:, [2]]], 1)
+
+        c = torch.cat([c1, c2, c3, c4, c5, c6, c7, c8, coords_mean], 1)
+        return c
+
     @force_fp32(apply_to='feats')
     def clusters_voxelization(self,
                               clusters_idx,
                               clusters_offset,
                               feats,
                               coords,
+                              pt_offsets,
                               scale,
                               spatial_shape,
                               rand_quantize=False):
@@ -808,12 +833,16 @@ class SoftGroup(nn.Module):
         coords = coords[c_idxs.long()]
 
         clusters_offset_cuda = clusters_offset.cuda()
-        coords_mean = sec_mean(coords, clusters_offset_cuda) 
+        coords_mean = sec_mean(coords + pt_offsets[c_idxs.long()], clusters_offset_cuda) # N, 3
 
         # breakpoint()
 
-        coords_min = sec_min(coords, clusters_offset_cuda)
-        coords_max = sec_max(coords, clusters_offset_cuda)
+        coords_min = sec_min(coords, clusters_offset_cuda) # N, 3
+        coords_max = sec_max(coords, clusters_offset_cuda) # N, 3
+
+        coords_bounding = self.get_bounding_vertices(coords_min, coords_max, coords_mean)
+
+
 
         # 0.01 to ensure voxel_coords < spatial_shape
         clusters_scale = 1 / ((coords_max - coords_min) / spatial_shape).max(1)[0] - 0.01
@@ -841,7 +870,7 @@ class SoftGroup(nn.Module):
         voxelization_feats = spconv.SparseConvTensor(out_feats,
                                                      out_coords.int().cuda(), spatial_shape,
                                                      int(clusters_idx[-1, 0]) + 1)
-        return voxelization_feats, inp_map, coords_mean
+        return voxelization_feats, inp_map, coords_mean, coords_bounding
 
     def get_batch_offsets(self, batch_idxs, bs):
         batch_offsets = torch.zeros(bs + 1).int().cuda()
