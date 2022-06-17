@@ -43,10 +43,10 @@ semantic_label_names = [
 #         np.savetxt(os.path.join(split + '_gt', scene_name + '.txt'), instance_label_new, fmt='%d')
 
 if __name__ == '__main__':
-    split_files = open('/home/ubuntu/Workspace/tuannd42-dev/3dis_ws/SoftGroup/dataset/scannetv2/scannetv2_trainsmall.txt', 'r')
+    split_files = open('scannetv2_trainsmall.txt', 'r')
     split_names = split_files.read().splitlines()
 
-    files = sorted([f'/home/ubuntu/Workspace/tuannd42-dev/3dis_ws/SoftGroup/dataset/scannetv2/train/{s}_inst_nostuff.pth' for s in split_names])
+    files = sorted([f'train/{s}_inst_nostuff.pth' for s in split_names])
 
     split = 'trainsmall'
     # files = sorted(glob.glob('{}/scene*_inst_nostuff.pth'.format('train')))

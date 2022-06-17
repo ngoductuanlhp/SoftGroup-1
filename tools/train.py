@@ -181,12 +181,12 @@ def main():
     train_set = build_dataset(cfg.data.train, logger)
     val_set = build_dataset(cfg.data.test, logger)
 
-    val_set2 = build_dataset(cfg.data.test2, logger)
+    # val_set2 = build_dataset(cfg.data.test2, logger)
 
     train_loader = build_dataloader(
         train_set, training=True, dist=args.dist, **cfg.dataloader.train)
     val_loader = build_dataloader(val_set, training=False, dist=args.dist, **cfg.dataloader.test)
-    val_loader2 = build_dataloader(val_set2, training=False, dist=args.dist, **cfg.dataloader.test)
+    # val_loader2 = build_dataloader(val_set2, training=False, dist=args.dist, **cfg.dataloader.test)
     # optim
     optimizer = build_optimizer(model, cfg.optimizer)
 
@@ -209,8 +209,8 @@ def main():
         if not args.skip_validate and (is_multiple(epoch, cfg.save_freq) or is_power2(epoch)):
             validate(epoch, model, optimizer, val_loader, cfg, logger, writer)
 
-            logger.info('\nvalidate on trainsmall set\n')
-            validate(epoch, model, optimizer, val_loader2, cfg, logger, writer)
+            # logger.info('\nvalidate on trainsmall set\n')
+            # validate(epoch, model, optimizer, val_loader2, cfg, logger, writer)
         writer.flush()
 
 
