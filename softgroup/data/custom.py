@@ -75,15 +75,28 @@ class CustomDataset(Dataset):
         instance_pointnum = []
         instance_cls = []
         instance_num = int(instance_label.max()) + 1
+
+        pt_offset_vertices_label = np.ones((xyz.shape[0], 6), dtype=np.float32) * -100.0
+
         for i_ in range(instance_num):
             inst_idx_i = np.where(instance_label == i_)
             xyz_i = xyz[inst_idx_i]
-            pt_mean[inst_idx_i] = xyz_i.mean(0)
+
+            centroid  = xyz_i.mean(0)
+            pt_mean[inst_idx_i] = centroid
+
+            min_xyz_i = xyz_i.min(0)
+            max_xyz_i = xyz_i.max(0)
+
+            pt_offset_vertices_label[inst_idx_i, 0:3] = min_xyz_i - xyz_i
+            pt_offset_vertices_label[inst_idx_i, 3:6] = max_xyz_i - xyz_i
+
             instance_pointnum.append(inst_idx_i[0].size)
             cls_idx = inst_idx_i[0][0]
             instance_cls.append(semantic_label[cls_idx])
+
         pt_offset_label = pt_mean - xyz
-        return instance_num, instance_pointnum, instance_cls, pt_offset_label
+        return instance_num, instance_pointnum, instance_cls, pt_offset_label, pt_offset_vertices_label
 
     def dataAugment(self, xyz, jitter=False, flip=False, rot=False, prob=1.0):
         m = np.eye(3)
@@ -171,7 +184,7 @@ class CustomDataset(Dataset):
             return None
         xyz, xyz_middle, rgb, semantic_label, instance_label = data
         info = self.getInstanceInfo(xyz_middle, instance_label.astype(np.int32), semantic_label)
-        inst_num, inst_pointnum, inst_cls, pt_offset_label = info
+        inst_num, inst_pointnum, inst_cls, pt_offset_label, pt_offset_vertices_label = info
         coord = torch.from_numpy(xyz).long()
         coord_float = torch.from_numpy(xyz_middle)
         feat = torch.from_numpy(rgb).float()
@@ -180,8 +193,9 @@ class CustomDataset(Dataset):
         semantic_label = torch.from_numpy(semantic_label)
         instance_label = torch.from_numpy(instance_label)
         pt_offset_label = torch.from_numpy(pt_offset_label)
+        pt_offset_vertices_label = torch.from_numpy(pt_offset_vertices_label)
         return (scan_id, coord, coord_float, feat, semantic_label, instance_label, inst_num,
-                inst_pointnum, inst_cls, pt_offset_label)
+                inst_pointnum, inst_cls, pt_offset_label, pt_offset_vertices_label)
 
     def collate_fn(self, batch):
         scan_ids = []
@@ -194,6 +208,7 @@ class CustomDataset(Dataset):
         instance_pointnum = []  # (total_nInst), int
         instance_cls = []  # (total_nInst), long
         pt_offset_labels = []
+        pt_offset_vertices_labels = []
 
         total_inst_num = 0
         batch_id = 0
@@ -201,7 +216,7 @@ class CustomDataset(Dataset):
             if data is None:
                 continue
             (scan_id, coord, coord_float, feat, semantic_label, instance_label, inst_num,
-             inst_pointnum, inst_cls, pt_offset_label) = data
+             inst_pointnum, inst_cls, pt_offset_label, pt_offset_vertices_label) = data
             instance_label[np.where(instance_label != -100)] += total_inst_num
             total_inst_num += inst_num
             scan_ids.append(scan_id)
@@ -213,6 +228,7 @@ class CustomDataset(Dataset):
             instance_pointnum.extend(inst_pointnum)
             instance_cls.extend(inst_cls)
             pt_offset_labels.append(pt_offset_label)
+            pt_offset_vertices_labels.append(pt_offset_vertices_label)
             batch_id += 1
         assert batch_id > 0, 'empty batch'
         if batch_id < len(batch):
@@ -228,6 +244,7 @@ class CustomDataset(Dataset):
         instance_pointnum = torch.tensor(instance_pointnum, dtype=torch.int)  # int (total_nInst)
         instance_cls = torch.tensor(instance_cls, dtype=torch.long)  # long (total_nInst)
         pt_offset_labels = torch.cat(pt_offset_labels).float()
+        pt_offset_vertices_labels = torch.cat(pt_offset_vertices_labels).float()
 
         spatial_shape = np.clip(
             coords.max(0)[0][1:].numpy() + 1, self.voxel_cfg.spatial_shape[0], None)
@@ -246,6 +263,7 @@ class CustomDataset(Dataset):
             'instance_pointnum': instance_pointnum,
             'instance_cls': instance_cls,
             'pt_offset_labels': pt_offset_labels,
+            'pt_offset_vertices_labels': pt_offset_vertices_labels,
             'spatial_shape': spatial_shape,
             'batch_size': batch_id,
         }

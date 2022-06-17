@@ -10,7 +10,7 @@ from ..ops import (ballquery_batch_p, bfs_cluster, get_mask_iou_on_cluster, get_
                    get_mask_label, global_avg_pool, sec_max, sec_min, voxelization,
                    voxelization_idx)
 from ..util import cuda_cast, force_fp32, rle_encode
-from .blocks import MLP, ResidualBlock, UBlock
+from .blocks import MLP, ResidualBlock, UBlock, PositionalEmbedding
 
 def compute_dice_loss(inputs, targets):
     """
@@ -74,7 +74,8 @@ class SoftGroup(nn.Module):
                  instance_voxel_cfg=None,
                  train_cfg=None,
                  test_cfg=None,
-                 fixed_modules=[]):
+                 fixed_modules=[],
+                 embedding_coord=False):
         super().__init__()
         self.channels = channels
         self.num_blocks = num_blocks
@@ -88,6 +89,15 @@ class SoftGroup(nn.Module):
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
         self.fixed_modules = fixed_modules
+        self.embedding_coord = embedding_coord
+        
+
+        if self.embedding_coord:
+            n_freqs = 4
+            self.pos_embed = PositionalEmbedding(3, n_freqs)
+            in_channels = self.pos_embed.out_channels + 3
+        else:
+            in_channels = 6
 
         block = ResidualBlock
         norm_fn = functools.partial(nn.BatchNorm1d, eps=1e-4, momentum=0.1)
@@ -95,7 +105,7 @@ class SoftGroup(nn.Module):
         # backbone
         self.input_conv = spconv.SparseSequential(
             spconv.SubMConv3d(
-                6, channels, kernel_size=3, padding=1, bias=False, indice_key='subm1'))
+                in_channels, channels, kernel_size=3, padding=1, bias=False, indice_key='subm1'))
         block_channels = [channels * (i + 1) for i in range(num_blocks)]
         self.unet = UBlock(block_channels, norm_fn, 2, block, indice_key_id=1)
         self.output_layer = spconv.SparseSequential(norm_fn(channels), nn.ReLU())
@@ -103,6 +113,8 @@ class SoftGroup(nn.Module):
         # point-wise prediction
         self.semantic_linear = MLP(channels, semantic_classes, norm_fn=norm_fn, num_layers=2)
         self.offset_linear = MLP(channels, 3, norm_fn=norm_fn, num_layers=2)
+
+        self.offset_vertices_linear = MLP(channels, 6, norm_fn=norm_fn, num_layers=2)
 
         # topdown refinement path
         if not semantic_only:
@@ -153,18 +165,23 @@ class SoftGroup(nn.Module):
     @cuda_cast
     def forward_train(self, batch_idxs, voxel_coords, p2v_map, v2p_map, coords_float, feats,
                       semantic_labels, instance_labels, instance_pointnum, instance_cls,
-                      pt_offset_labels, spatial_shape, batch_size, **kwargs):
+                      pt_offset_labels, pt_offset_vertices_labels, spatial_shape, batch_size, **kwargs):
         losses = {}
-        feats = torch.cat((feats, coords_float), 1)
+
+        if self.embedding_coord:
+            feats = torch.cat((feats, self.pos_embed(coords_float)), 1)
+            # print('feats', feats.shape)
+        else:
+            feats = torch.cat((feats, coords_float), 1)
         voxel_feats = voxelization(feats, p2v_map)
         input = spconv.SparseConvTensor(voxel_feats, voxel_coords.int(), spatial_shape, batch_size)
-        semantic_scores, pt_offsets, output_feats = self.forward_backbone(input, v2p_map)
+        semantic_scores, pt_offsets, pt_offsets_vertices, output_feats = self.forward_backbone(input, v2p_map)
 
         # point wise losses
 
         if not self.freeze_backbone:
-            point_wise_loss = self.point_wise_loss(semantic_scores, pt_offsets, semantic_labels,
-                                                instance_labels, pt_offset_labels)
+            point_wise_loss = self.point_wise_loss(semantic_scores, pt_offsets, pt_offsets_vertices, semantic_labels,
+                                                instance_labels, pt_offset_labels, pt_offset_vertices_labels)
             losses.update(point_wise_loss)
 
         # instance losses
@@ -191,8 +208,8 @@ class SoftGroup(nn.Module):
             losses.update(instance_loss)
         return self.parse_losses(losses)
 
-    def point_wise_loss(self, semantic_scores, pt_offsets, semantic_labels, instance_labels,
-                        pt_offset_labels):
+    def point_wise_loss(self, semantic_scores, pt_offsets, pt_offsets_vertices, semantic_labels, instance_labels,
+                        pt_offset_labels, pt_offset_vertices_labels):
         losses = {}
         semantic_loss = F.cross_entropy(
             semantic_scores, semantic_labels, ignore_index=self.ignore_label)
@@ -201,10 +218,15 @@ class SoftGroup(nn.Module):
         pos_inds = instance_labels != self.ignore_label
         if pos_inds.sum() == 0:
             offset_loss = 0 * pt_offsets.sum()
+            offset_vertices_loss = 0 * pt_offsets_vertices.sum()
         else:
             offset_loss = F.l1_loss(
                 pt_offsets[pos_inds], pt_offset_labels[pos_inds], reduction='sum') / pos_inds.sum()
+
+            offset_vertices_loss = F.l1_loss(
+                pt_offsets_vertices[pos_inds], pt_offset_vertices_labels[pos_inds], reduction='sum') / pos_inds.sum()
         losses['offset_loss'] = offset_loss
+        losses['offset_vertices_loss'] = offset_vertices_loss
         return losses
 
     @force_fp32(apply_to=('cls_scores', 'mask_scores', 'iou_scores'))
@@ -285,10 +307,15 @@ class SoftGroup(nn.Module):
     def forward_test(self, batch_idxs, voxel_coords, p2v_map, v2p_map, coords_float, feats,
                      semantic_labels, instance_labels, pt_offset_labels, spatial_shape, batch_size,
                      scan_ids, **kwargs):
-        feats = torch.cat((feats, coords_float), 1)
+
+        if self.embedding_coord:
+            feats = torch.cat((feats, self.pos_embed(coords_float)), 1)
+        else:
+            feats = torch.cat((feats, coords_float), 1)
+        # feats = torch.cat((feats, coords_float), 1)
         voxel_feats = voxelization(feats, p2v_map)
         input = spconv.SparseConvTensor(voxel_feats, voxel_coords.int(), spatial_shape, batch_size)
-        semantic_scores, pt_offsets, output_feats = self.forward_backbone(
+        semantic_scores, pt_offsets, pt_offsets_vertices, output_feats = self.forward_backbone(
             input, v2p_map, x4_split=self.test_cfg.x4_split)
         if self.test_cfg.x4_split:
             coords_float = self.merge_4_parts(coords_float)
@@ -333,7 +360,8 @@ class SoftGroup(nn.Module):
 
             semantic_scores = self.semantic_linear(output_feats)
             pt_offsets = self.offset_linear(output_feats)
-            return semantic_scores, pt_offsets, output_feats
+            pt_offsets_vertices = self.offset_vertices_linear(output_feats)
+            return semantic_scores, pt_offsets, pt_offsets_vertices, output_feats
 
     def forward_4_parts(self, x, input_map):
         """Helper function for s3dis: devide and forward 4 parts of a scene."""

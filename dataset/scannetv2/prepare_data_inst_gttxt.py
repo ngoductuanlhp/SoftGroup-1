@@ -13,9 +13,43 @@ semantic_label_names = [
     'bathtub', 'otherfurniture'
 ]
 
+# if __name__ == '__main__':
+#     split = 'val'
+#     files = sorted(glob.glob('{}/scene*_inst_nostuff.pth'.format(split)))
+#     rooms = [torch.load(i) for i in files]
+
+#     if not os.path.exists(split + '_gt'):
+#         os.mkdir(split + '_gt')
+
+#     for i in range(len(rooms)):
+#         xyz, rgb, label, instance_label = rooms[
+#             i]  # label 0~19 -100;  instance_label 0~instance_num-1 -100
+#         scene_name = files[i].split('/')[-1][:12]
+#         print('{}/{} {}'.format(i + 1, len(rooms), scene_name))
+
+#         instance_label_new = np.zeros(
+#             instance_label.shape, dtype=np.int32
+#         )  # 0 for unannotated, xx00y: x for semantic_label, y for inst_id (1~instance_num)
+
+#         instance_num = int(instance_label.max()) + 1
+#         for inst_id in range(instance_num):
+#             instance_mask = np.where(instance_label == inst_id)[0]
+#             sem_id = int(label[instance_mask[0]])
+#             if (sem_id == -100):
+#                 sem_id = 0
+#             semantic_label = semantic_label_idxs[sem_id]
+#             instance_label_new[instance_mask] = semantic_label * 1000 + inst_id + 1
+
+#         np.savetxt(os.path.join(split + '_gt', scene_name + '.txt'), instance_label_new, fmt='%d')
+
 if __name__ == '__main__':
-    split = 'val'
-    files = sorted(glob.glob('{}/scene*_inst_nostuff.pth'.format(split)))
+    split_files = open('/home/ubuntu/Workspace/tuannd42-dev/3dis_ws/SoftGroup/dataset/scannetv2/scannetv2_trainsmall.txt', 'r')
+    split_names = split_files.read().splitlines()
+
+    files = sorted([f'/home/ubuntu/Workspace/tuannd42-dev/3dis_ws/SoftGroup/dataset/scannetv2/train/{s}_inst_nostuff.pth' for s in split_names])
+
+    split = 'trainsmall'
+    # files = sorted(glob.glob('{}/scene*_inst_nostuff.pth'.format('train')))
     rooms = [torch.load(i) for i in files]
 
     if not os.path.exists(split + '_gt'):
