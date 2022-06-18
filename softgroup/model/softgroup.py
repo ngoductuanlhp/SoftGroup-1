@@ -121,8 +121,8 @@ class SoftGroup(nn.Module):
             self.tiny_unet_outputlayer = spconv.SparseSequential(norm_fn(channels), nn.ReLU())
             self.cls_linear = nn.Linear(channels, instance_classes + 1)
             # self.mask_linear = MLP(channels, instance_classes + 1, norm_fn=None, num_layers=2)
-            # self.iou_score_linear = nn.Linear(channels, instance_classes + 1)
-            self.iou_score_linear = nn.Linear(channels, 1)
+            self.iou_score_linear = nn.Linear(channels, instance_classes + 1)
+            # self.iou_score_linear = nn.Linear(channels, 1)
 
             ### convolution before the condinst take place (convolution num before the generated parameters take place)
             conv_block = conv_with_kaiming_uniform("BN", activation=True)
@@ -136,8 +136,8 @@ class SoftGroup(nn.Module):
 
             in_channels = channels + 3*9
 
-            self.weight_nums = [in_channels * (channels), (channels) * 1]
-            self.bias_nums = [(channels), 1]
+            self.weight_nums = [in_channels * (channels), (channels) * (instance_classes + 1)]
+            self.bias_nums = [(channels), (instance_classes + 1)]
             self.num_gen_params = sum(self.weight_nums) + sum(self.bias_nums)
             self.controller = nn.Sequential(*[conv_block(channels, channels), conv_block(channels, channels), nn.Conv1d(channels, self.num_gen_params, kernel_size=1)])
             self.mask_tower = nn.Sequential(*[conv_block(channels, channels), conv_block(channels, channels), conv_block(channels, channels), nn.Conv1d(channels, channels, 1)])
@@ -315,6 +315,9 @@ class SoftGroup(nn.Module):
                 continue
 
             mask_logits = mask_logits_dict[class_id] # N_inst, N_points_of_classX
+
+            mask_logits = mask_logits[:, :, class_id-2]
+
             inst_idxs = inst_idxs_dict[class_id]
             object_idxs = per_cls_object_idxs[class_id]
 
@@ -333,7 +336,6 @@ class SoftGroup(nn.Module):
             gt_ious_ = torch.zeros((inst_idxs.shape[0])).cuda()
             gt_ious_mask_ = torch.zeros((inst_idxs.shape[0])).cuda()
 
-            # breakpoint()
             
             for n in range(inst_num):
                 if inst_idxs[n] not in pos_inds:
@@ -390,7 +392,10 @@ class SoftGroup(nn.Module):
             # iou_score_weight = (labels < self.instance_classes).float()
             # iou_score_slice = iou_scores[slice_inds, labels]
 
-        iou_score_loss = F.mse_loss(iou_scores, gt_ious, reduction='none')
+        slice_inds = torch.arange(0, iou_scores.size(0), dtype=torch.long, device=iou_scores.device)
+        iou_score_slice = iou_scores[slice_inds, labels]
+
+        iou_score_loss = F.mse_loss(iou_score_slice, gt_ious, reduction='none')
         iou_score_loss = (iou_score_loss * gt_ious_mask).sum() / (gt_ious_mask.sum() + 1e-4)
         losses['iou_score_loss'] = iou_score_loss
         return losses
@@ -741,7 +746,7 @@ class SoftGroup(nn.Module):
             # cur_cls_scores, cur_cls_inds = torch.max(cls_scores[inst_idxs], dim=1)
             # assert torch.all(cur_cls_inds == class_id-label_shift)
 
-            cur_iou_scores = iou_scores[inst_idxs]
+            cur_iou_scores = iou_scores[inst_idxs, class_id]
             
 
             num_instances = inst_idxs.shape[0]
