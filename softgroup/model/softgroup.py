@@ -136,6 +136,7 @@ class SoftGroup(nn.Module):
         else:
             self.freeze_backbone = False
 
+
     def init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.BatchNorm1d):
@@ -303,10 +304,14 @@ class SoftGroup(nn.Module):
             losses[loss_name] = loss_value.item()
         return loss, losses
 
+    # @cuda_cast
+    # def forward_test(self, batch_idxs, voxel_coords, p2v_map, v2p_map, coords_float, feats,
+    #                  semantic_labels, instance_labels, pt_offset_labels, spatial_shape, batch_size,
+    #                  scan_ids, **kwargs):
     @cuda_cast
     def forward_test(self, batch_idxs, voxel_coords, p2v_map, v2p_map, coords_float, feats,
-                     semantic_labels, instance_labels, pt_offset_labels, spatial_shape, batch_size,
-                     scan_ids, **kwargs):
+                      semantic_labels, instance_labels, instance_pointnum, instance_cls,
+                      pt_offset_labels, pt_offset_vertices_labels, spatial_shape, batch_size, scan_ids, **kwargs):
 
         if self.embedding_coord:
             feats = torch.cat((feats, self.pos_embed(coords_float)), 1)
@@ -343,6 +348,11 @@ class SoftGroup(nn.Module):
                                                 cls_scores, iou_scores, mask_scores)
             gt_instances = self.get_gt_instances(semantic_labels, instance_labels)
             ret.update(dict(pred_instances=pred_instances, gt_instances=gt_instances))
+
+            # debug_accu = self.debug_accu_classification(cls_scores, mask_scores, iou_scores, proposals_idx,
+            #                                    proposals_offset, instance_labels, instance_pointnum,
+            #                                    instance_cls)
+            # ret.update(dict(debug_accu=debug_accu.cpu().numpy()))
         return ret
 
     def forward_backbone(self, input, input_map, x4_split=False):
@@ -466,6 +476,7 @@ class SoftGroup(nn.Module):
         cls_scores = cls_scores.softmax(1)
         semantic_pred = semantic_scores.max(1)[1]
         cls_pred_list, score_pred_list, mask_pred_list = [], [], []
+
         for i in range(self.instance_classes):
             if i in self.sem2ins_classes:
                 cls_pred = cls_scores.new_tensor([i + 1], dtype=torch.long)
@@ -494,9 +505,11 @@ class SoftGroup(nn.Module):
                 cls_pred = cls_pred[inds]
                 score_pred = score_pred[inds]
                 mask_pred = mask_pred[inds]
+
             cls_pred_list.append(cls_pred)
             score_pred_list.append(score_pred)
             mask_pred_list.append(mask_pred)
+
         cls_pred = torch.cat(cls_pred_list).cpu().numpy()
         score_pred = torch.cat(score_pred_list).cpu().numpy()
         mask_pred = torch.cat(mask_pred_list).cpu().numpy()
@@ -592,3 +605,41 @@ class SoftGroup(nn.Module):
         x_pool_expand = x_pool[indices.long()]
         x.features = torch.cat((x.features, x_pool_expand), dim=1)
         return x
+
+    @force_fp32(apply_to=('cls_scores', 'mask_scores', 'iou_scores'))
+    def debug_accu_classification(self, cls_scores, mask_scores, iou_scores, proposals_idx, proposals_offset,
+                      instance_labels, instance_pointnum, instance_cls):
+        with torch.no_grad():
+            proposals_idx = proposals_idx[:, 1].cuda()
+            proposals_offset = proposals_offset.cuda()
+
+            # cal iou of clustered instance
+            ious_on_cluster = get_mask_iou_on_cluster(proposals_idx, proposals_offset, instance_labels,
+                                                    instance_pointnum)
+
+            # filter out background instances
+            fg_inds = (instance_cls != self.ignore_label)
+            fg_instance_cls = instance_cls[fg_inds]
+            fg_ious_on_cluster = ious_on_cluster[:, fg_inds]
+
+            # overlap > thr on fg instances are positive samples
+            max_iou, gt_inds = fg_ious_on_cluster.max(1)
+            pos_inds = max_iou >= self.train_cfg.pos_iou_thr
+            pos_gt_inds = gt_inds[pos_inds]
+
+            # compute cls loss. follow detection convention: 0 -> K - 1 are fg, K is bg
+            labels = fg_instance_cls.new_full((fg_ious_on_cluster.size(0), ), self.instance_classes)
+            labels[pos_inds] = fg_instance_cls[pos_gt_inds]
+
+            cls_scores_conf, cls_scores_pred = torch.max(cls_scores, -1)
+
+            # inds = cur_cls_scores > self.test_cfg.cls_score_thr
+            cls_scores_pred[cls_scores_conf <= self.test_cfg.cls_score_thr] = self.instance_classes
+            # iou_scores_pred = torch.index_select(iou_scores, 1, cls_scores_pred)
+            # score_pred = cls_scores_conf * iou_scores_pred.clamp(0, 1)
+            # cls_loss = F.cross_entropy(cls_scores, labels)
+            accuracy = ((cls_scores_pred == labels).sum() / cls_scores_pred.shape[0])
+
+            
+
+            return accuracy

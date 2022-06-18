@@ -4,8 +4,12 @@ import os
 import os.path as osp
 import shutil
 import time
+import numpy as np
+np.random.seed(0)
 
 import torch
+torch.manual_seed(0)
+
 import yaml
 from munch import Munch
 from softgroup.data import build_dataloader, build_dataset
@@ -28,6 +32,7 @@ def get_args():
     parser.add_argument('--work_dir', type=str, help='working directory')
     parser.add_argument('--skip_validate', action='store_true', help='skip validation')
     parser.add_argument("--local_rank", type=int, default=0)
+    parser.add_argument("--exp_name", type=str, default='default')
     args = parser.parse_args()
     return args
 
@@ -86,6 +91,8 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
     results = []
     all_sem_preds, all_sem_labels, all_offset_preds, all_offset_labels = [], [], [], []
     all_inst_labels, all_pred_insts, all_gt_insts = [], [], []
+    all_debug_accu = []
+
     _, world_size = get_dist_info()
     progress_bar = tqdm(total=len(val_loader) * world_size, disable=not is_main_process())
     val_set = val_loader.dataset
@@ -97,17 +104,45 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
             progress_bar.update(world_size)
         progress_bar.close()
         results = collect_results_gpu(results, len(val_set))
+
     if is_main_process():
         for res in results:
-            all_sem_preds.append(res['semantic_preds'])
-            all_sem_labels.append(res['semantic_labels'])
-            all_offset_preds.append(res['offset_preds'])
-            all_offset_labels.append(res['offset_labels'])
-            all_inst_labels.append(res['instance_labels'])
-            if not cfg.model.semantic_only:
+            if cfg.model.semantic_only:
+                all_sem_preds.append(res['semantic_preds'])
+                all_sem_labels.append(res['semantic_labels'])
+                all_offset_preds.append(res['offset_preds'])
+                all_offset_labels.append(res['offset_labels'])
+                all_inst_labels.append(res['instance_labels'])
+            else:
                 all_pred_insts.append(res['pred_instances'])
                 all_gt_insts.append(res['gt_instances'])
-        if not cfg.model.semantic_only:
+
+                if 'debug_accu' in res:
+                    all_debug_accu.append(res['debug_accu'])
+
+        global best_metric
+
+        if cfg.model.semantic_only:
+            logger.info('Evaluate semantic segmentation and offset MAE')
+            miou = evaluate_semantic_miou(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
+            acc = evaluate_semantic_acc(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
+
+            del all_sem_preds, all_sem_labels
+            mae = evaluate_offset_mae(all_offset_preds, all_offset_labels, all_inst_labels,
+                                    cfg.model.ignore_label, logger)
+
+            
+            del all_offset_preds, all_offset_labels, all_inst_labels
+
+            writer.add_scalar('val/mIoU', miou, epoch)
+            writer.add_scalar('val/Acc', acc, epoch)
+            writer.add_scalar('val/Offset MAE', mae, epoch)
+
+            if best_metric < miou:
+                best_metric = miou
+                checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq, best=True)
+
+        else:
             logger.info('Evaluate instance segmentation')
             scannet_eval = ScanNetEval(val_set.CLASSES)
             eval_res = scannet_eval.evaluate(all_pred_insts, all_gt_insts)
@@ -117,30 +152,13 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
             writer.add_scalar('val/AP_25', eval_res['all_ap_25%'], epoch)
             logger.info('AP: {:.3f}. AP_50: {:.3f}. AP_25: {:.3f}'.format(
                 eval_res['all_ap'], eval_res['all_ap_50%'], eval_res['all_ap_25%']))
-        logger.info('Evaluate semantic segmentation and offset MAE')
-        miou = evaluate_semantic_miou(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
-        acc = evaluate_semantic_acc(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
 
-        del all_sem_preds, all_sem_labels
-        mae = evaluate_offset_mae(all_offset_preds, all_offset_labels, all_inst_labels,
-                                  cfg.model.ignore_label, logger)
+            if len(all_debug_accu) > 0:
+                accu = np.mean(np.array(all_debug_accu))
+                logger.info('Mean accuracy of classification: {:.3f}'.format(accu))
 
-        
-        del all_offset_preds, all_offset_labels, all_inst_labels
-
-        writer.add_scalar('val/mIoU', miou, epoch)
-        writer.add_scalar('val/Acc', acc, epoch)
-        writer.add_scalar('val/Offset MAE', mae, epoch)
-
-        global best_metric
-
-        if not cfg.model.semantic_only:
             if best_metric < eval_res['all_ap_50%']:
                 best_metric = eval_res['all_ap_50%']
-                checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq, best=True)
-        else:
-            if best_metric < miou:
-                best_metric = miou
                 checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq, best=True)
 
 
@@ -157,7 +175,8 @@ def main():
     if args.work_dir:
         cfg.work_dir = args.work_dir
     else:
-        cfg.work_dir = osp.join('./work_dirs', osp.splitext(osp.basename(args.config))[0])
+        cfg.work_dir = osp.join('./work_dirs', osp.splitext(osp.basename(args.config))[0], args.exp_name)
+
     os.makedirs(osp.abspath(cfg.work_dir), exist_ok=True)
     timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
     log_file = osp.join(cfg.work_dir, f'{timestamp}.log')
@@ -181,7 +200,7 @@ def main():
     logger.info(f'Trainable params: {trainable_params}')
 
     if args.dist:
-        model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()])
+        model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()], find_unused_parameters=True)
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.fp16)
 
     # data

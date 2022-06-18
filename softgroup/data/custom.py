@@ -34,6 +34,8 @@ class CustomDataset(Dataset):
         self.filenames = self.get_filenames()
         self.logger.info(f'Load {self.mode} dataset: {len(self.filenames)} scans')
 
+        # self.filenames = self.filenames[:50]
+
     def get_filenames(self):
         filenames = glob(osp.join(self.data_root, self.prefix, '*' + self.suffix))
         assert len(filenames) > 0, 'Empty dataset.'
