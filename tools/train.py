@@ -10,7 +10,7 @@ import yaml
 from munch import Munch
 from softgroup.data import build_dataloader, build_dataset
 from softgroup.evaluation import (ScanNetEval, evaluate_offset_mae, evaluate_semantic_acc,
-                                  evaluate_semantic_miou)
+                                  evaluate_semantic_miou, PointWiseEval)
 from softgroup.model import SoftGroup
 from softgroup.util import (AverageMeter, SummaryWriter, build_optimizer, checkpoint_save,
                             collect_results_gpu, cosine_lr_after_step, get_dist_info,
@@ -92,21 +92,25 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
     with torch.no_grad():
         model.eval()
         for i, batch in enumerate(val_loader):
-            result = model(batch)
+            with torch.cuda.amp.autocast(enabled=cfg.fp16):
+                result = model(batch)
             results.append(result)
             progress_bar.update(world_size)
         progress_bar.close()
         results = collect_results_gpu(results, len(val_set))
     if is_main_process():
+        point_eval = PointWiseEval()
         for res in results:
-            all_sem_preds.append(res['semantic_preds'])
-            all_sem_labels.append(res['semantic_labels'])
-            all_offset_preds.append(res['offset_preds'])
-            all_offset_labels.append(res['offset_labels'])
-            all_inst_labels.append(res['instance_labels'])
+            # all_sem_preds.append(res['semantic_preds'])
+            # all_sem_labels.append(res['semantic_labels'])
+            # all_offset_preds.append(res['offset_preds'])
+            # all_offset_labels.append(res['offset_labels'])
+            # all_inst_labels.append(res['instance_labels'])
+            point_eval.update(res['semantic_preds'], res['offset_preds'], res['semantic_labels'], res['offset_labels'], res['instance_labels'])
             if not cfg.model.semantic_only:
                 all_pred_insts.append(res['pred_instances'])
                 all_gt_insts.append(res['gt_instances'])
+
         if not cfg.model.semantic_only:
             logger.info('Evaluate instance segmentation')
             scannet_eval = ScanNetEval(val_set.CLASSES)
@@ -117,10 +121,12 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
             logger.info('AP: {:.3f}. AP_50: {:.3f}. AP_25: {:.3f}'.format(
                 eval_res['all_ap'], eval_res['all_ap_50%'], eval_res['all_ap_25%']))
         logger.info('Evaluate semantic segmentation and offset MAE')
-        miou = evaluate_semantic_miou(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
-        acc = evaluate_semantic_acc(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
-        mae = evaluate_offset_mae(all_offset_preds, all_offset_labels, all_inst_labels,
-                                  cfg.model.ignore_label, logger)
+
+        miou, acc, mae = point_eval.get_eval(logger)
+        # miou = evaluate_semantic_miou(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
+        # acc = evaluate_semantic_acc(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
+        # mae = evaluate_offset_mae(all_offset_preds, all_offset_labels, all_inst_labels,
+        #                           cfg.model.ignore_label, logger)
         writer.add_scalar('val/mIoU', miou, epoch)
         writer.add_scalar('val/Acc', acc, epoch)
         writer.add_scalar('val/Offset MAE', mae, epoch)

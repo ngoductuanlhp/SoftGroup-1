@@ -10,13 +10,13 @@ import yaml
 from munch import Munch
 from softgroup.data import build_dataloader, build_dataset
 from softgroup.evaluation import (ScanNetEval, evaluate_offset_mae, evaluate_semantic_acc,
-                                  evaluate_semantic_miou)
+                                  evaluate_semantic_miou, PointWiseEval)
 from softgroup.model import SoftGroup
 from softgroup.util import (collect_results_gpu, get_dist_info, get_root_logger, init_dist,
                             is_main_process, load_checkpoint, rle_decode)
 from torch.nn.parallel import DistributedDataParallel
 from tqdm import tqdm
-
+import time
 
 def get_args():
     parser = argparse.ArgumentParser('SoftGroup')
@@ -92,6 +92,8 @@ def main():
     dataloader = build_dataloader(dataset, training=False, dist=args.dist, **cfg.dataloader.test)
     results = []
     scan_ids, coords, sem_preds, sem_labels, offset_preds, offset_labels = [], [], [], [], [], []
+    debug_accu = []
+
     inst_labels, pred_insts, gt_insts = [], [], []
     _, world_size = get_dist_info()
     progress_bar = tqdm(total=len(dataloader) * world_size, disable=not is_main_process())
@@ -102,22 +104,28 @@ def main():
                 continue
 
             # print(i)
-            result = model(batch)
+            # t = time.time()
+            with torch.cuda.amp.autocast(enabled=cfg.fp16):
+                result = model(batch)
+            # print('f time', time.time() - t)
             results.append(result)
             progress_bar.update(world_size)
         progress_bar.close()
         results = collect_results_gpu(results, len(dataset))
     if is_main_process():
-        # if args.save_lite:
-        #     results[0:300:10]
+        point_eval = PointWiseEval()
         for res in results:
             scan_ids.append(res['scan_id'])
             coords.append(res['coords_float'])
-            sem_preds.append(res['semantic_preds'])
-            sem_labels.append(res['semantic_labels'])
-            offset_preds.append(res['offset_preds'])
-            offset_labels.append(res['offset_labels'])
-            inst_labels.append(res['instance_labels'])
+            # sem_preds.append(res['semantic_preds'])
+            # sem_labels.append(res['semantic_labels'])
+            # offset_preds.append(res['offset_preds'])
+            # offset_labels.append(res['offset_labels'])
+            # inst_labels.append(res['instance_labels'])
+            point_eval.update(res['semantic_preds'], res['offset_preds'], res['semantic_labels'], res['offset_labels'], res['instance_labels'])
+            if 'debug_accu' in res:
+                point_eval.update_debug_acc(res['debug_accu'], res['debug_accu_num_pos'])
+
             if not cfg.model.semantic_only:
                 pred_insts.append(res['pred_instances'])
                 gt_insts.append(res['gt_instances'])
@@ -127,9 +135,10 @@ def main():
             scannet_eval.evaluate(pred_insts, gt_insts)
         logger.info('Evaluate semantic segmentation and offset MAE')
         ignore_label = cfg.model.ignore_label
-        evaluate_semantic_miou(sem_preds, sem_labels, ignore_label, logger)
-        evaluate_semantic_acc(sem_preds, sem_labels, ignore_label, logger)
-        evaluate_offset_mae(offset_preds, offset_labels, inst_labels, ignore_label, logger)
+        miou, acc, mae = point_eval.get_eval(logger)
+        # evaluate_semantic_miou(sem_preds, sem_labels, ignore_label, logger)
+        # evaluate_semantic_acc(sem_preds, sem_labels, ignore_label, logger)
+        # evaluate_offset_mae(offset_preds, offset_labels, inst_labels, ignore_label, logger)
 
         # save output
         if not args.out:
