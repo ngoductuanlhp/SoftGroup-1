@@ -4,7 +4,7 @@ model:
   semantic_classes: 20
   instance_classes: 18
   sem2ins_classes: []
-  semantic_only: False
+  semantic_only: True
   ignore_label: -100
   grouping_cfg:
     score_thr: 0.2
@@ -27,8 +27,8 @@ model:
     cls_score_thr: 0.001
     mask_score_thr: -0.5
     min_npoint: 100
-  fixed_modules: ['input_conv', 'unet', 'output_layer', 'semantic_linear', 'offset_linear']
-  # fixed_modules: []
+  # fixed_modules: ['input_conv', 'unet', 'output_layer', 'semantic_linear', 'offset_linear']
+  fixed_modules: []
   embedding_coord: True
   
 data:
@@ -89,5 +89,5 @@ fp16: True
 epochs: 32
 step_epoch: 2
 save_freq: 4
-pretrain: './work_dirs/softgroup_scannet_bbox_context/best.pth'
+pretrain: './pretrains/best_pretrain_bbox_context.pth'
 work_dir: ''

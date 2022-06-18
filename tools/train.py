@@ -111,6 +111,7 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
             logger.info('Evaluate instance segmentation')
             scannet_eval = ScanNetEval(val_set.CLASSES)
             eval_res = scannet_eval.evaluate(all_pred_insts, all_gt_insts)
+            del all_pred_insts, all_gt_insts
             writer.add_scalar('val/AP', eval_res['all_ap'], epoch)
             writer.add_scalar('val/AP_50', eval_res['all_ap_50%'], epoch)
             writer.add_scalar('val/AP_25', eval_res['all_ap_25%'], epoch)
@@ -119,8 +120,14 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
         logger.info('Evaluate semantic segmentation and offset MAE')
         miou = evaluate_semantic_miou(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
         acc = evaluate_semantic_acc(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
+
+        del all_sem_preds, all_sem_labels
         mae = evaluate_offset_mae(all_offset_preds, all_offset_labels, all_inst_labels,
                                   cfg.model.ignore_label, logger)
+
+        
+        del all_offset_preds, all_offset_labels, all_inst_labels
+
         writer.add_scalar('val/mIoU', miou, epoch)
         writer.add_scalar('val/Acc', acc, epoch)
         writer.add_scalar('val/Offset MAE', mae, epoch)
