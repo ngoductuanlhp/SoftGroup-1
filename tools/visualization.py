@@ -198,8 +198,8 @@ def get_coords_color(opt):
         offset_coords = np.load(offset_file)
 
         # xyz = offset_coords[:, :3] + offset_coords[:, 3:]
-        # xyz[label_pred > 1] += offset_coords[label_pred > 1]
-        xyz += offset_coords
+        xyz[label_pred > 1] += offset_coords[label_pred > 1]
+        # xyz += offset_coords
 
     # same color order according to instance pointnum
     elif (opt.task == 'instance_gt'):
