@@ -14,7 +14,7 @@ import yaml
 from munch import Munch
 from softgroup.data import build_dataloader, build_dataset
 from softgroup.evaluation import (ScanNetEval, evaluate_offset_mae, evaluate_semantic_acc,
-                                  evaluate_semantic_miou)
+                                  evaluate_semantic_miou, PointWiseEval)
 from softgroup.model import SoftGroup
 from softgroup.util import (AverageMeter, SummaryWriter, build_optimizer, checkpoint_save,
                             collect_results_gpu, cosine_lr_after_step, get_dist_info,
@@ -99,40 +99,31 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
     with torch.no_grad():
         model.eval()
         for i, batch in enumerate(val_loader):
-            result = model(batch)
+            with torch.cuda.amp.autocast(enabled=cfg.fp16):
+                result = model(batch)
             results.append(result)
             progress_bar.update(world_size)
         progress_bar.close()
         results = collect_results_gpu(results, len(val_set))
 
     if is_main_process():
+        point_eval = PointWiseEval()
         for res in results:
-            if cfg.model.semantic_only:
-                all_sem_preds.append(res['semantic_preds'])
-                all_sem_labels.append(res['semantic_labels'])
-                all_offset_preds.append(res['offset_preds'])
-                all_offset_labels.append(res['offset_labels'])
-                all_inst_labels.append(res['instance_labels'])
-            else:
+            # all_sem_preds.append(res['semantic_preds'])
+            # all_sem_labels.append(res['semantic_labels'])
+            # all_offset_preds.append(res['offset_preds'])
+            # all_offset_labels.append(res['offset_labels'])
+            # all_inst_labels.append(res['instance_labels'])
+            point_eval.update(res['semantic_preds'], res['offset_preds'], res['semantic_labels'], res['offset_labels'], res['instance_labels'])
+            if not cfg.model.semantic_only:
                 all_pred_insts.append(res['pred_instances'])
                 all_gt_insts.append(res['gt_instances'])
-
-                if 'debug_accu' in res:
-                    all_debug_accu.append(res['debug_accu'])
 
         global best_metric
 
         if cfg.model.semantic_only:
             logger.info('Evaluate semantic segmentation and offset MAE')
-            miou = evaluate_semantic_miou(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
-            acc = evaluate_semantic_acc(all_sem_preds, all_sem_labels, cfg.model.ignore_label, logger)
-
-            del all_sem_preds, all_sem_labels
-            mae = evaluate_offset_mae(all_offset_preds, all_offset_labels, all_inst_labels,
-                                    cfg.model.ignore_label, logger)
-
-            
-            del all_offset_preds, all_offset_labels, all_inst_labels
+            miou, acc, mae = point_eval.get_eval(logger)
 
             writer.add_scalar('val/mIoU', miou, epoch)
             writer.add_scalar('val/Acc', acc, epoch)
