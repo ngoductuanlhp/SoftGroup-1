@@ -331,6 +331,6 @@ if __name__ == '__main__':
         vis = o3d.visualization.Visualizer()
         vis.create_window()
         vis.add_geometry(pc)
-        vis.get_render_option().point_size = 1.5
+        vis.get_render_option().point_size = 6
         vis.run()
         vis.destroy_window()
