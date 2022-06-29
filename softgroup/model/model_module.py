@@ -4,6 +4,10 @@ from softgroup.data import build_dataloader, build_dataset
 from torch.utils.data import DataLoader
 from softgroup.evaluation import (ScanNetEval, evaluate_offset_mae, evaluate_semantic_acc,
                                   evaluate_semantic_miou, PointWiseEval)
+from softgroup.util import (AverageMeter, SummaryWriter, build_optimizer, checkpoint_save,
+                            collect_results_gpu, cosine_lr_after_step, get_dist_info,
+                            get_max_memory, get_root_logger, init_dist, is_main_process,
+                            is_multiple, is_power2, load_checkpoint)
 
 class ModelModule(pl.LightningModule):
     def __init__(self, cfg, model, tlogger):
@@ -16,6 +20,8 @@ class ModelModule(pl.LightningModule):
         self.cfg = cfg
         self.model = model
         self.tlogger = tlogger
+
+        self.automatic_optimization = False
 
         # self.loss_func = loss_func
         # self.metrics = metrics
@@ -52,10 +58,23 @@ class ModelModule(pl.LightningModule):
             pin_memory=True)
 
     def training_step(self, batch, batch_idx):
+        opt = self.optimizers()
+        opt.zero_grad()
+
         loss, loss_dict = self.model.forward_train(**batch)
 
-        self.log('train/loss',loss.item(), prog_bar = True)
-        return {'loss': loss}
+        self.manual_backward(loss)
+        opt.step()
+
+        self.log('train/loss', loss.detach(), prog_bar = True)
+        self.log('train/cls_loss', loss_dict['cls_loss'].detach(), prog_bar = True)
+        self.log('train/mask_loss', loss_dict['mask_loss'].detach(), prog_bar = True)
+        # return {'loss': loss}
+
+    def training_epoch_end(self, outputs):
+        optimizer = self.optimizers().optimizer
+        cosine_lr_after_step(optimizer, self.cfg.optimizer.lr, self.current_epoch, self.cfg.step_epoch, self.cfg.epochs)
+        return super().training_epoch_end(outputs)
 
     def validation_step(self, batch, batch_idx):
         ret = self.model.forward_test(**batch)
@@ -108,10 +127,10 @@ class ModelModule(pl.LightningModule):
 
         optimizer = optimizer(parameters, **optim_cfg)
         
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, self.cfg.epochs, eta_min=1e-6, last_epoch=-1, verbose=False)
+        # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, self.cfg.epochs, eta_min=1e-6, last_epoch=-1, verbose=False)
         # if disable_scheduler or self.scheduler_args is None:
         #     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda lr: 1)
         # else:
         #     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, **self.scheduler_args)
 
-        return [optimizer], [{'scheduler': scheduler, 'interval': 'step'}]
+        return [optimizer]

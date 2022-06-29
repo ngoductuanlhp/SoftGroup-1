@@ -224,15 +224,17 @@ def main():
                                     save_last=True)
     
     
-    
+    progress_bar = pl.callbacks.progress.TQDMProgressBar(refresh_rate=10)
+    lr_monitor = LearningRateMonitor(logging_interval='epoch')
+
     trainer = Trainer(max_epochs=cfg.epochs,
                     #  checkpoint_callback=[cp_callback],
-                    callbacks=[cp_callback, CheckpointEveryNSteps(save_epoch=5, dir=f'ckpts/{exp_name}')],
+                    callbacks=[cp_callback, CheckpointEveryNSteps(save_epoch=5, dir=f'ckpts/{exp_name}'), progress_bar, lr_monitor],
                     # resume_from_checkpoint = args.resume,
                     precision=16 if cfg.fp16 else 32,
                     accelerator="gpu",
                     logger = pl_logger,
-                    weights_summary = None,
+                    enable_model_summary=False,
                     progress_bar_refresh_rate = 10,
                     gpus=num_gpus,
                     strategy="ddp" if num_gpus > 1 else None,

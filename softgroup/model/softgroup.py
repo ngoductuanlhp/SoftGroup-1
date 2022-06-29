@@ -274,11 +274,11 @@ class SoftGroup(nn.Module):
     def parse_losses(self, losses):
         loss = sum(v for v in losses.values())
         losses['loss'] = loss
-        for loss_name, loss_value in losses.items():
-            if dist.is_available() and dist.is_initialized():
-                loss_value = loss_value.data.clone()
-                dist.all_reduce(loss_value.div_(dist.get_world_size()))
-            losses[loss_name] = loss_value.item()
+        # for loss_name, loss_value in losses.items():
+        #     if dist.is_available() and dist.is_initialized():
+        #         loss_value = loss_value.data.clone()
+        #         dist.all_reduce(loss_value.div_(dist.get_world_size()))
+        #     losses[loss_name] = loss_value.item()
         return loss, losses
 
     # @cuda_cast
