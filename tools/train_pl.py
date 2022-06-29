@@ -23,8 +23,9 @@ from tqdm import tqdm
 import pytorch_lightning as pl
 import hydra
 
-from pytorch_lightning.loggers import TestTubeLogger
-from pytorch_lightning.strategies.ddp import DDPStrategy
+# from pytorch_lightning.loggers import TestTubeLogger
+# from pytorch_lightning.strategies.ddp import DDPStrategy
+from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning import LightningModule, Trainer
 
@@ -177,18 +178,18 @@ def main():
     log_file = osp.join(cfg.work_dir, f'{timestamp}.log')
     logger = get_root_logger(log_file=log_file)
     logger.info(f'Config:\n{cfg_txt}')
-    logger.info(f'Distributed: {num_gpus > 0}')
+    logger.info(f'Distributed: {num_gpus > 1}')
     logger.info(f'Mix precision training: {cfg.fp16}')
     shutil.copy(args.config, osp.join(cfg.work_dir, osp.basename(args.config)))
     # writer = SummaryWriter(cfg.work_dir)
 
 
     
-    pl_logger = TestTubeLogger(
+    pl_logger = TensorBoardLogger(
         save_dir="work_dirs",
         name=exp_name,
-        debug=False,
-        create_git_tag=False
+        # debug=False,
+        # create_git_tag=False
     )
 
     # model
@@ -224,60 +225,41 @@ def main():
                                     save_last=True)
     
     
-    progress_bar = pl.callbacks.progress.TQDMProgressBar(refresh_rate=10)
+    # progress_bar = pl.callbacks.progress.TQDMProgressBar(refresh_rate=10)
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
+
+    # trainer = Trainer(max_epochs=cfg.epochs,
+    #                 #  checkpoint_callback=[cp_callback],
+    #                 callbacks=[cp_callback, CheckpointEveryNSteps(save_epoch=5, dir=f'ckpts/{exp_name}'), progress_bar, lr_monitor],
+    #                 # resume_from_checkpoint = args.resume,
+    #                 precision=16 if cfg.fp16 else 32,
+    #                 accelerator="gpu",
+    #                 logger = pl_logger,
+    #                 enable_model_summary=False,
+    #                 progress_bar_refresh_rate = 10,
+    #                 gpus=num_gpus,
+    #                 strategy="ddp" if num_gpus > 1 else None,
+    #                 num_sanity_val_steps = 1,
+    #                 benchmark = True
+    #                 )
 
     trainer = Trainer(max_epochs=cfg.epochs,
                     #  checkpoint_callback=[cp_callback],
-                    callbacks=[cp_callback, CheckpointEveryNSteps(save_epoch=5, dir=f'ckpts/{exp_name}'), progress_bar, lr_monitor],
-                    # resume_from_checkpoint = args.resume,
-                    precision=16 if cfg.fp16 else 32,
-                    accelerator="gpu",
+                    callbacks=[cp_callback, CheckpointEveryNSteps(save_epoch=5, dir=f'ckpts/{exp_name}'), lr_monitor],
+                    # resume_from_checkpoint = hparams.ckpt_path,
                     logger = pl_logger,
-                    enable_model_summary=False,
+                    weights_summary = None,
                     progress_bar_refresh_rate = 10,
                     gpus=num_gpus,
-                    strategy="ddp" if num_gpus > 1 else None,
+                    distributed_backend = 'ddp' if num_gpus > 1 else None,
                     num_sanity_val_steps = 1,
+                    deterministic=True,
                     benchmark = True
                     )
+
     trainer.fit(model_module)
     
     
-
-    # if args.dist:
-    #     model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()])
-    # scaler = torch.cuda.amp.GradScaler(enabled=cfg.fp16)
-
-    # # data
-    # train_set = build_dataset(cfg.data.train, logger)
-    # val_set = build_dataset(cfg.data.test, logger)
-    # train_loader = build_dataloader(
-    #     train_set, training=True, dist=args.dist, **cfg.dataloader.train)
-    # val_loader = build_dataloader(val_set, training=False, dist=args.dist, **cfg.dataloader.test)
-
-    # # optim
-    # optimizer = build_optimizer(model, cfg.optimizer)
-
-    # # pretrain, resume
-    # start_epoch = 1
-    # if args.resume:
-    #     logger.info(f'Resume from {args.resume}')
-    #     start_epoch = load_checkpoint(args.resume, logger, model, optimizer=optimizer)
-    # elif cfg.pretrain:
-    #     logger.info(f'Load pretrain from {cfg.pretrain}')
-    #     load_checkpoint(cfg.pretrain, logger, model)
-
-    # # train and val
-    # logger.info('Training')
-
-    # global best_metric
-    # best_metric = 0
-    # for epoch in range(start_epoch, cfg.epochs + 1):
-    #     train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer)
-    #     if not args.skip_validate and (is_multiple(epoch, cfg.save_freq) or is_power2(epoch)):
-    #         validate(epoch, model, optimizer, val_loader, cfg, logger, writer)
-    #     writer.flush()
 
 
 if __name__ == '__main__':
