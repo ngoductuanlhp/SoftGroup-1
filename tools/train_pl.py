@@ -16,15 +16,19 @@ from softgroup.util import (AverageMeter, SummaryWriter, build_optimizer, checkp
                             collect_results_gpu, cosine_lr_after_step, get_dist_info,
                             get_max_memory, get_root_logger, init_dist, is_main_process,
                             is_multiple, is_power2, load_checkpoint)
-from torch.nn.parallel import DistributedDataParallel
+
+from softgroup.model.model_module import ModelModule
 from tqdm import tqdm
 
 import pytorch_lightning as pl
 import hydra
 
+from pytorch_lightning.loggers import TestTubeLogger
 from pytorch_lightning.strategies.ddp import DDPStrategy
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning import LightningModule, Trainer
 
+from pl_utils import CheckpointEveryNSteps
 
 def get_args():
     parser = argparse.ArgumentParser('SoftGroup')
@@ -34,6 +38,7 @@ def get_args():
     parser.add_argument('--work_dir', type=str, help='working directory')
     parser.add_argument('--skip_validate', action='store_true', help='skip validation')
     parser.add_argument("--local_rank", type=int, default=0)
+    parser.add_argument("--exp_name", type=str, default='default')
     args = parser.parse_args()
     return args
 
@@ -154,28 +159,41 @@ def main():
     cfg_txt = open(args.config, 'r').read()
     cfg = Munch.fromDict(yaml.safe_load(cfg_txt))
 
-    if args.dist:
-        init_dist()
-    cfg.dist = args.dist
+    # if args.dist:
+    #     init_dist()
+    # cfg.dist = args.dist
 
     # work_dir & logger
+    exp_name = osp.splitext(osp.basename(args.config))[0] + '/' +  args.exp_name
     if args.work_dir:
         cfg.work_dir = args.work_dir
     else:
-        cfg.work_dir = osp.join('./work_dirs', osp.splitext(osp.basename(args.config))[0])
+        cfg.work_dir = osp.join('./work_dirs', exp_name)
     os.makedirs(osp.abspath(cfg.work_dir), exist_ok=True)
+
+    num_gpus = torch.cuda.device_count() if args.dist else 1
+
     timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
     log_file = osp.join(cfg.work_dir, f'{timestamp}.log')
     logger = get_root_logger(log_file=log_file)
     logger.info(f'Config:\n{cfg_txt}')
-    logger.info(f'Distributed: {args.dist}')
+    logger.info(f'Distributed: {num_gpus > 0}')
     logger.info(f'Mix precision training: {cfg.fp16}')
     shutil.copy(args.config, osp.join(cfg.work_dir, osp.basename(args.config)))
-    writer = SummaryWriter(cfg.work_dir)
+    # writer = SummaryWriter(cfg.work_dir)
+
+
+    
+    pl_logger = TestTubeLogger(
+        save_dir="work_dirs",
+        name=exp_name,
+        debug=False,
+        create_git_tag=False
+    )
 
     # model
-    model = SoftGroup(**cfg.model).cuda()
-    
+    model = SoftGroup(**cfg.model)
+
     total_params = 0
     trainable_params = 0
     for p in model.parameters():
@@ -185,39 +203,79 @@ def main():
     logger.info(f'Total params: {total_params}')
     logger.info(f'Trainable params: {trainable_params}')
 
-    if args.dist:
-        model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()])
-    scaler = torch.cuda.amp.GradScaler(enabled=cfg.fp16)
-
-    # data
-    train_set = build_dataset(cfg.data.train, logger)
-    val_set = build_dataset(cfg.data.test, logger)
-    train_loader = build_dataloader(
-        train_set, training=True, dist=args.dist, **cfg.dataloader.train)
-    val_loader = build_dataloader(val_set, training=False, dist=args.dist, **cfg.dataloader.test)
-
-    # optim
-    optimizer = build_optimizer(model, cfg.optimizer)
-
-    # pretrain, resume
-    start_epoch = 1
-    if args.resume:
-        logger.info(f'Resume from {args.resume}')
-        start_epoch = load_checkpoint(args.resume, logger, model, optimizer=optimizer)
-    elif cfg.pretrain:
+    if cfg.pretrain:
         logger.info(f'Load pretrain from {cfg.pretrain}')
         load_checkpoint(cfg.pretrain, logger, model)
 
     # train and val
     logger.info('Training')
 
-    global best_metric
-    best_metric = 0
-    for epoch in range(start_epoch, cfg.epochs + 1):
-        train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer)
-        if not args.skip_validate and (is_multiple(epoch, cfg.save_freq) or is_power2(epoch)):
-            validate(epoch, model, optimizer, val_loader, cfg, logger, writer)
-        writer.flush()
+    model_module = ModelModule(cfg, model, logger)
+
+    if cfg.model.semantic_only:
+        save_metric = 'val/mIoU'
+    else:
+        save_metric = 'val/AP'
+    cp_callback = ModelCheckpoint(dirpath=f'ckpts/{exp_name}',
+                                    filename='{epoch:d}',
+                                    monitor=save_metric,
+                                    mode='max',
+                                    save_top_k=1,
+                                    save_last=True)
+    
+    
+    
+    trainer = Trainer(max_epochs=cfg.epochs,
+                    #  checkpoint_callback=[cp_callback],
+                    callbacks=[cp_callback, CheckpointEveryNSteps(save_epoch=5, dir=f'ckpts/{exp_name}')],
+                    # resume_from_checkpoint = args.resume,
+                    precision=16 if cfg.fp16 else 32,
+                    accelerator="gpu",
+                    logger = pl_logger,
+                    weights_summary = None,
+                    progress_bar_refresh_rate = 10,
+                    gpus=num_gpus,
+                    strategy="ddp" if num_gpus > 1 else None,
+                    num_sanity_val_steps = 1,
+                    benchmark = True
+                    )
+    trainer.fit(model_module)
+    
+    
+
+    # if args.dist:
+    #     model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()])
+    # scaler = torch.cuda.amp.GradScaler(enabled=cfg.fp16)
+
+    # # data
+    # train_set = build_dataset(cfg.data.train, logger)
+    # val_set = build_dataset(cfg.data.test, logger)
+    # train_loader = build_dataloader(
+    #     train_set, training=True, dist=args.dist, **cfg.dataloader.train)
+    # val_loader = build_dataloader(val_set, training=False, dist=args.dist, **cfg.dataloader.test)
+
+    # # optim
+    # optimizer = build_optimizer(model, cfg.optimizer)
+
+    # # pretrain, resume
+    # start_epoch = 1
+    # if args.resume:
+    #     logger.info(f'Resume from {args.resume}')
+    #     start_epoch = load_checkpoint(args.resume, logger, model, optimizer=optimizer)
+    # elif cfg.pretrain:
+    #     logger.info(f'Load pretrain from {cfg.pretrain}')
+    #     load_checkpoint(cfg.pretrain, logger, model)
+
+    # # train and val
+    # logger.info('Training')
+
+    # global best_metric
+    # best_metric = 0
+    # for epoch in range(start_epoch, cfg.epochs + 1):
+    #     train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer)
+    #     if not args.skip_validate and (is_multiple(epoch, cfg.save_freq) or is_power2(epoch)):
+    #         validate(epoch, model, optimizer, val_loader, cfg, logger, writer)
+    #     writer.flush()
 
 
 if __name__ == '__main__':

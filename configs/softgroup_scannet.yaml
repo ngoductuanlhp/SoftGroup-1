@@ -22,6 +22,8 @@ model:
   train_cfg:
     max_proposal_num: 200
     pos_iou_thr: 0.5
+    focal_loss: False
+    dice_loss: False
   test_cfg:
     x4_split: False
     cls_score_thr: 0.001

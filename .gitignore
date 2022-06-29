@@ -83,3 +83,4 @@ dataset/s3dis/Stanford3dDataset_v1.2
 work_dirs/
 pretrains/
 results/
+ckpts/
