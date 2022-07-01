@@ -20,7 +20,7 @@ model:
     scale: 50
     spatial_shape: 20
   train_cfg:
-    max_proposal_num: 200
+    max_proposal_num: 400
     pos_iou_thr: 0.5
     focal_loss: False
     dice_loss: False
@@ -29,7 +29,7 @@ model:
     cls_score_thr: 0.001
     mask_score_thr: -0.5
     min_npoint: 100
-  fixed_modules: ['input_conv', 'unet', 'output_layer', 'semantic_linear', 'offset_linear']
+  fixed_modules: ['input_conv', 'unet', 'output_layer', 'semantic_linear', 'offset_linear', 'offset_vertices_linear', 'box_conf_linear']
   # fixed_modules: []
   embedding_coord: True
   
@@ -76,20 +76,22 @@ dataloader:
     num_workers: 8
   test:
     batch_size: 1
-    num_workers: 1
+    num_workers: 8
 
 optimizer:
   type: 'Adam'
   lr: 0.004
 
 save_cfg:
-  semantic: True
-  offset: True
-  instance: True
+  semantic: False
+  offset: False
+  instance: False
+  offset_vertices: False
+  nmc_clusters: True
 
 fp16: True
 epochs: 32
 step_epoch: 16
 save_freq: 4
-pretrain: './pretrains/best_pretrain_bbox_context.pth'
+pretrain: 'work_dirs/softgroup_scannet_bbox_context/iou_conf/best.pth'
 work_dir: ''

@@ -192,6 +192,7 @@ def main():
 
     if args.dist:
         model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()], find_unused_parameters=True)
+        # model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()])
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.fp16)
 
     # data

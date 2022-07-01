@@ -9,4 +9,7 @@ OMP_NUM_THREADS=1 torchrun --nproc_per_node=$GPUS --master_port=$PORT  $(dirname
 
 CUDA_VISIBLE_DEVICES=0 python3 tools/test.py configs/softgroup_scannet.yaml work_dirs/softgroup_scannet/best.pth
 
-CUDA_VISIBLE_DEVICES=2 python3 tools/test.py configs/softgroup_scannet_bbox_context_head.yaml work_dirs/softgroup_scannet_bbox_context_head/best.pth
+CUDA_VISIBLE_DEVICES=2 python3 tools/test.py configs/softgroup_scannet_bbox_context_head.yaml pretrains/best_pretrain_bbox_context.pth
+
+
+CUDA_VISIBLE_DEVICES=6 python3 tools/test.py configs/softgroup_scannet_bbox_context_head.yaml work_dirs/softgroup_scannet_bbox_context/best.pth --out results/bbox_context --save_lite

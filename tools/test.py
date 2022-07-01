@@ -91,7 +91,8 @@ def main():
     dataset = build_dataset(cfg.data.test, logger)
     dataloader = build_dataloader(dataset, training=False, dist=args.dist, **cfg.dataloader.test)
     results = []
-    scan_ids, coords, sem_preds, sem_labels, offset_preds, offset_labels = [], [], [], [], [], []
+    scan_ids, coords, sem_preds, sem_labels, offset_preds, offset_vertices_preds, offset_labels = [], [], [], [], [], [], []
+    nmc_clusters = []
     inst_labels, pred_insts, gt_insts = [], [], []
     _, world_size = get_dist_info()
     progress_bar = tqdm(total=len(dataloader) * world_size, disable=not is_main_process())
@@ -121,6 +122,14 @@ def main():
             if 'debug_accu' in res:
                 point_eval.update_debug_acc(res['debug_accu'], res['debug_accu_num_pos'])
 
+            if cfg.save_cfg.offset_vertices:
+                offset_vertices_preds.append(res['offset_vertices_preds'])
+            if cfg.save_cfg.semantic:
+                sem_preds.append(res['semantic_preds'])
+            if cfg.save_cfg.offset:
+                offset_preds.append(res['offset_preds'])
+            if cfg.save_cfg.nmc_clusters:
+                nmc_clusters.append(res['nmc_clusters'])
             if not cfg.model.semantic_only:
                 pred_insts.append(res['pred_instances'])
                 gt_insts.append(res['gt_instances'])
@@ -146,9 +155,13 @@ def main():
         if cfg.save_cfg.offset:
             save_npy(args.out, 'offset_pred', scan_ids, offset_preds)
             # save_npy(args.out, 'offset_label', scan_ids, offset_labels)
+        if cfg.save_cfg.offset_vertices:
+            save_npy(args.out, 'offset_vertices_pred', scan_ids, offset_vertices_preds)
         if cfg.save_cfg.instance:
             save_pred_instances(args.out, 'pred_instance', scan_ids, pred_insts)
             # save_gt_instances(args.out, 'gt_instance', scan_ids, gt_insts)
+        if cfg.save_cfg.nmc_clusters:
+            save_npy(args.out, 'nmc_clusters', scan_ids, nmc_clusters)
 
 
 if __name__ == '__main__':
