@@ -110,7 +110,7 @@ def iou_aabb_single(coords_min_pivot, coords_max_pivot, coords_min_neighbors, co
     return iou
 
 @torch.no_grad()
-def non_maximum_cluster(box_conf, coords, pt_offsets_vertices, batch_offsets, radius=6**2, mean_active=300, iou_thresh=0.3):
+def non_maximum_cluster(box_conf, coords, pt_offsets_vertices, batch_offsets, radius=6**2, mean_active=100, iou_thresh=0.1):
     # box_conf: N
     n_points = box_conf.shape[0]
     batch_size = len(batch_offsets) - 1
