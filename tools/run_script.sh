@@ -1,0 +1,21 @@
+#!/bin/bash -e
+#SBATCH --job-name=softg01
+#SBATCH --output=/lustre/scratch/client/vinai/users/tuannd42/fewshot_ws/slurm_out/slurm_%A.out
+#SBATCH --error=/lustre/scratch/client/vinai/users/tuannd42/fewshot_ws/slurm_out/slurm_%A.err
+
+#SBATCH --gpus=1
+
+#SBATCH --nodes=1
+
+#SBATCH --mem-per-gpu=36G
+
+#SBATCH --cpus-per-gpu=16
+
+#SBATCH --partition=research
+#SBATCH --mail-type=all
+#SBATCH --mail-user=v.tuannd42@vinai.io
+
+srun --container-image="harbor.vinai-systems.com#research/tuannd42:softgroup" \
+--container-mounts=/lustre/scratch/client/vinai/users/tuannd42/fewshot_ws/SoftGroup:/home/ubuntu/SoftGroup \
+--container-workdir=/home/ubuntu/SoftGroup/ \
+python3 tools/train.py configs/softgroup_scannet_bbox_context_head.yaml --exp_name iou_conf_nmc_thresh0.1
