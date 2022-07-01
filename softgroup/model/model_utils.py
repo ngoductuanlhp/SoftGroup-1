@@ -110,11 +110,12 @@ def iou_aabb_single(coords_min_pivot, coords_max_pivot, coords_min_neighbors, co
     return iou
 
 @torch.no_grad()
-def non_maximum_cluster(box_conf, coords, pt_offsets_vertices, batch_offsets, radius=6**2, mean_active=300, iou_thresh=0.3):
+def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch_offsets, radius=6**2, mean_active=300, iou_thresh=0.3):
     # box_conf: N
     n_points = box_conf.shape[0]
     batch_size = len(batch_offsets) - 1
 
+    coords_centroid = coords + pt_offsets
     coords_min = coords + pt_offsets_vertices[:, :3]
     coords_max = coords + pt_offsets_vertices[:, 3:]
 
@@ -128,6 +129,8 @@ def non_maximum_cluster(box_conf, coords, pt_offsets_vertices, batch_offsets, ra
     for b in range(batch_size):
         batch_start = batch_offsets[b]
         batch_end = batch_offsets[b + 1]
+
+        centroid = coords_centroid[batch_start:batch_end]
 
         x1 = coords_min[batch_start:batch_end, 0]
         y1 = coords_min[batch_start:batch_end, 1]
@@ -155,6 +158,9 @@ def non_maximum_cluster(box_conf, coords, pt_offsets_vertices, batch_offsets, ra
             zz1 = torch.index_select(z1, dim=0, index=sort_indices)
             zz2 = torch.index_select(z2, dim=0, index=sort_indices)
 
+            centroid_ = torch.index_select(centroid, dim=0, index=sort_indices)
+            pivot = centroid[[index]]
+
 
             xx1 = torch.max(xx1, x1[index])
             yy1 = torch.max(yy1, y1[index])
@@ -174,7 +180,9 @@ def non_maximum_cluster(box_conf, coords, pt_offsets_vertices, batch_offsets, ra
 
             IoU = inter / union
 
-            mask = (IoU >= iou_thresh)
+            distances = torch.sum((pivot - centroid_)**2, -1)
+
+            mask = (IoU >= iou_thresh) | (distances < 0.016)
             neighbor_indices = torch.nonzero(mask).view(-1)
             final_neighbor_indices = sort_indices[neighbor_indices]
 
