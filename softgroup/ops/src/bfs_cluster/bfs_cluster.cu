@@ -65,6 +65,100 @@ __global__ void ballquery_batch_p_cuda_(int n, int meanActive, float radius,
   }
 }
 
+__global__ void ballquery_batch_p_boxiou_cuda_(int n, int meanActive, float thresh_iou,
+                                        const float *xyz, const int *batch_idxs,
+                                        const int *batch_offsets, int *idx,
+                                        int *start_len, int *cumsum) {
+  int pt_idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (pt_idx >= n)
+    return;
+
+  start_len += (pt_idx * 2);
+  int idx_temp[1000];
+
+
+
+  float o_x1 = xyz[pt_idx * 6 + 0];
+  float o_y1 = xyz[pt_idx * 6 + 1];
+  float o_z1 = xyz[pt_idx * 6 + 2];
+
+  float o_x2 = xyz[pt_idx * 6 + 3];
+  float o_y2 = xyz[pt_idx * 6 + 4];
+  float o_z2 = xyz[pt_idx * 6 + 5];
+
+  // float o_x2 = xyz[pt_idx * 3 + 0];
+  // float o_y2 = xyz[pt_idx * 3 + 1];
+  // float o_z2 = xyz[pt_idx * 3 + 2];
+
+  float pivot_area = (o_x2 - o_x1) * (o_y2 - o_y1) * (o_z2 - o_z1);
+
+  int batch_idx = batch_idxs[pt_idx];
+  int start = batch_offsets[batch_idx];
+  int end = batch_offsets[batch_idx + 1];
+
+  int cnt = 0;
+  for (int k = start; k < end; k++) {
+    float x1 = xyz[k * 6 + 0];
+    float y1 = xyz[k * 6 + 1];
+    float z1 = xyz[k * 6 + 2];
+
+    float x2 = xyz[k * 6 + 3];
+    float y2 = xyz[k * 6 + 4];
+    float z2 = xyz[k * 6 + 5];
+
+    // float x2 = xyz[k * 3 + 0];
+    // float y2 = xyz[k * 3 + 1];
+    // float z2 = xyz[k * 3 + 2];
+
+    float cur_area = (x2 - x1) * (y2 - y1) * (z2 - z1);
+
+    float x_upper = min(x2, o_x2);
+    float y_upper = min(y2, o_y2);
+    float z_upper = min(z2, o_z2);
+
+    float x_lower = max(x1, o_x1);
+    float y_lower = max(y1, o_y1);
+    float z_lower = max(z1, o_z1);
+
+    float range_x = (x_upper > x_lower) ? (x_upper - x_lower) : 0.0;
+    float range_y = (y_upper > y_lower) ? (y_upper - y_lower) : 0.0;
+    float range_z = (z_upper > z_lower) ? (z_upper - z_lower) : 0.0;
+
+    float intersection_vol = range_x * range_y * range_z;
+    float union_vol = cur_area + pivot_area - intersection_vol;
+
+    float iou = intersection_vol / union_vol;
+
+    // float d2 =
+    //     (o_x2 - x2) * (o_x2 - x2) + (o_y2 - y2) * (o_y2 - y2) + (o_z2 - z2) * (o_z2 - z2);
+
+    if (iou >= thresh_iou) {
+      if (cnt < 1000) {
+        idx_temp[cnt] = k;
+      } else {
+        break;
+      }
+      ++cnt;
+    }
+  }
+
+  start_len[0] = atomicAdd(cumsum, cnt);
+  start_len[1] = cnt;
+
+  int thre = n * meanActive;
+  if (start_len[0] >= thre)
+    return;
+
+  idx += start_len[0];
+  if (start_len[0] + cnt >= thre)
+    cnt = thre - start_len[0];
+
+  for (int k = 0; k < cnt; k++) {
+    idx[k] = idx_temp[k];
+  }
+}
+
+
 int ballquery_batch_p_cuda(int n, int meanActive, float radius,
                            const float *xyz, const int *batch_idxs,
                            const int *batch_offsets, int *idx, int *start_len,
@@ -100,90 +194,7 @@ int ballquery_batch_p_cuda(int n, int meanActive, float radius,
   return cumsum;
 }
 
-
-__global__ void ballquery_batch_p_boxiou_cuda_(int n, int meanActive, float thresh_iou,
-                                        const float *xyz, const int *batch_idxs,
-                                        const int *batch_offsets, int *idx,
-                                        int *start_len, int *cumsum) {
-  int pt_idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (pt_idx >= n)
-    return;
-
-  start_len += (pt_idx * 2);
-  int idx_temp[1000];
-
-
-
-  float o_x1 = xyz[pt_idx * 3 + 0];
-  float o_y1 = xyz[pt_idx * 3 + 1];
-  float o_z1 = xyz[pt_idx * 3 + 2];
-
-  float o_x2 = xyz[pt_idx * 3 + 3];
-  float o_y2 = xyz[pt_idx * 3 + 4];
-  float o_z2 = xyz[pt_idx * 3 + 5];
-
-  float pivot_area = (o_x2 - o_x1) * (o_y2 - o_y1) * (o_z2 - o_z1);
-
-  int batch_idx = batch_idxs[pt_idx];
-  int start = batch_offsets[batch_idx];
-  int end = batch_offsets[batch_idx + 1];
-
-  int cnt = 0;
-  for (int k = start; k < end; k++) {
-    float x1 = xyz[k * 3 + 0];
-    float y1 = xyz[k * 3 + 1];
-    float z1 = xyz[k * 3 + 2];
-
-    float x2 = xyz[k * 3 + 3];
-    float y2 = xyz[k * 3 + 4];
-    float z2 = xyz[k * 3 + 5];
-
-    float cur_area = (x2 - x1) * (y2 - y1) * (z2 - z1);
-
-    float x_upper = min(x2, o_x2);
-    float y_upper = min(y2, o_y2);
-    float z_upper = min(z2, o_z2);
-
-    float x_lower = max(x1, o_x1);
-    float y_lower = max(y1, o_y1);
-    float z_lower = max(z1, o_z1);
-
-    float range_x = (x_upper > x_lower) ? (x_upper - x_lower) : 0;
-    float range_y = (y_upper > y_lower) ? (y_upper - y_lower) : 0;
-    float range_z = (z_upper > z_lower) ? (z_upper - z_lower) : 0;
-
-    float intersection_vol = range_x * range_y * range_z;
-    float union_vol = cur_area + pivot_area - intersection_vol;
-
-    float iou = intersection_vol / (union_vol + 0.00001);
-
-    if (iou >= thresh_iou) {
-      if (cnt < 1000) {
-        idx_temp[cnt] = k;
-      } else {
-        break;
-      }
-      ++cnt;
-    }
-  }
-
-  start_len[0] = atomicAdd(cumsum, cnt);
-  start_len[1] = cnt;
-
-  int thre = n * meanActive;
-  if (start_len[0] >= thre)
-    return;
-
-  idx += start_len[0];
-  if (start_len[0] + cnt >= thre)
-    cnt = thre - start_len[0];
-
-  for (int k = 0; k < cnt; k++) {
-    idx[k] = idx_temp[k];
-  }
-}
-
-int ballquery_batch_p_boxiou_cuda(int n, int meanActive, float thresh_iou,
+int ballquery_batch_p_boxiou_cuda(int n, int meanActive, float radius,
                            const float *xyz, const int *batch_idxs,
                            const int *batch_offsets, int *idx, int *start_len,
                            cudaStream_t stream) {
@@ -205,7 +216,7 @@ int ballquery_batch_p_boxiou_cuda(int n, int meanActive, float thresh_iou,
   cudaMemcpy(p_cumsum, &cumsum, sizeof(int), cudaMemcpyHostToDevice);
 
   ballquery_batch_p_boxiou_cuda_<<<blocks, threads, 0, stream>>>(
-      n, meanActive, thresh_iou, xyz, batch_idxs, batch_offsets, idx, start_len,
+      n, meanActive, radius, xyz, batch_idxs, batch_offsets, idx, start_len,
       p_cumsum);
 
   err = cudaGetLastError();
@@ -217,3 +228,7 @@ int ballquery_batch_p_boxiou_cuda(int n, int meanActive, float thresh_iou,
   cudaMemcpy(&cumsum, p_cumsum, sizeof(int), cudaMemcpyDeviceToHost);
   return cumsum;
 }
+
+
+
+

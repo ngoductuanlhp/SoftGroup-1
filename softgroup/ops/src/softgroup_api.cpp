@@ -15,6 +15,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("voxelize_bp", &voxelize_bp_feat, "voxelize_bp");
 
   m.def("ballquery_batch_p", &ballquery_batch_p, "ballquery_batch_p");
+  m.def("ballquery_batch_p_boxiou", &ballquery_batch_p_boxiou, "ballquery_batch_p_boxiou");
   m.def("bfs_cluster", &bfs_cluster, "bfs_cluster");
 
   m.def("global_avg_pool_fp", &global_avg_pool_fp, "global_avg_pool_fp");

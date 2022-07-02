@@ -15,6 +15,7 @@ int ballquery_batch_p(at::Tensor xyz_tensor, at::Tensor batch_idxs_tensor,
                       at::Tensor batch_offsets_tensor, at::Tensor idx_tensor,
                       at::Tensor start_len_tensor, int n, int meanActive,
                       float radius);
+
 int ballquery_batch_p_cuda(int n, int meanActive, float radius,
                            const float *xyz, const int *batch_idxs,
                            const int *batch_offsets, int *idx, int *start_len,
@@ -24,7 +25,8 @@ int ballquery_batch_p_boxiou(at::Tensor xyz_tensor, at::Tensor batch_idxs_tensor
                       at::Tensor batch_offsets_tensor, at::Tensor idx_tensor,
                       at::Tensor start_len_tensor, int n, int meanActive,
                       float thresh_iou);
-int ballquery_batch_p_boxiou_cuda(int n, int meanActive, float thresh_iou,
+
+int ballquery_batch_p_boxiou_cuda(int n, int meanActive, float radius,
                            const float *xyz, const int *batch_idxs,
                            const int *batch_offsets, int *idx, int *start_len,
                            cudaStream_t stream);

@@ -398,6 +398,7 @@ class SoftGroup(nn.Module):
         batch_size = batch_idxs.max() + 1
         semantic_scores = semantic_scores.softmax(dim=-1)
 
+        box_iou_thresh = self.grouping_cfg.box_iou_thresh
         radius = self.grouping_cfg.radius
         mean_active = self.grouping_cfg.mean_active
         npoint_thr = self.grouping_cfg.npoint_thr
@@ -424,11 +425,10 @@ class SoftGroup(nn.Module):
             # NOTE BALL QUERY
             # idx, start_len = ballquery_batch_p(coords_ + pt_offsets_, batch_idxs_, batch_offsets_,
             #                                    radius, mean_active)
-            coords_box = coords_.repeat(1, 2) + pt_offsets_vertices_
+            coords_box_ = coords_.repeat(1, 2) + pt_offsets_vertices_
 
-            assert coords_box.shape[1] == 6
-            idx, start_len = ballquery_batch_p_boxiou(coords_box, batch_idxs_, batch_offsets_,
-                                               radius, mean_active)
+            idx, start_len = ballquery_batch_p_boxiou(coords_box_, batch_idxs_, batch_offsets_,
+                                               box_iou_thresh, mean_active)
             proposals_idx, proposals_offset = bfs_cluster(class_numpoint_mean, idx.cpu(),
                                                           start_len.cpu(), npoint_thr, class_id)
 

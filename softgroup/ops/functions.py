@@ -218,6 +218,7 @@ class BallQueryBatchP(Function):
         while True:
             idx = torch.cuda.IntTensor(n * meanActive).zero_()
             start_len = torch.cuda.IntTensor(n, 2).zero_()
+
             nActive = ops.ballquery_batch_p(coords, batch_idxs, batch_offsets, idx, start_len, n,
                                             meanActive, radius)
             if nActive <= n * meanActive:
@@ -258,13 +259,18 @@ class BallQueryBatchP_BoxIou(Function):
         while True:
             idx = torch.cuda.IntTensor(n * meanActive).zero_()
             start_len = torch.cuda.IntTensor(n, 2).zero_()
+
+
+            # print('debug', coords.shape, thresh_iou)
             nActive = ops.ballquery_batch_p_boxiou(coords, batch_idxs, batch_offsets, idx, start_len, n,
                                             meanActive, thresh_iou)
+
+            
             if nActive <= n * meanActive:
                 break
             meanActive = int(nActive // n + 1)
         idx = idx[:nActive]
-
+        # print('debug', coords.shape, thresh_iou, nActive)
         return idx, start_len
 
     @staticmethod
