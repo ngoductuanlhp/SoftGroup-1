@@ -234,6 +234,46 @@ class BallQueryBatchP(Function):
 
 ballquery_batch_p = BallQueryBatchP.apply
 
+class BallQueryBatchP_BoxIou(Function):
+
+    @staticmethod
+    def forward(ctx, coords, batch_idxs, batch_offsets, thresh_iou, meanActive):
+        '''
+        :param ctx:
+        :param coords: (n, 3) float
+        :param batch_idxs: (n) int
+        :param batch_offsets: (B+1) int
+        :param radius: float
+        :param meanActive: int
+        :return: idx (nActive), int
+        :return: start_len (n, 2), int
+        '''
+
+        n = coords.size(0)
+
+        assert coords.is_contiguous() and coords.is_cuda
+        assert batch_idxs.is_contiguous() and batch_idxs.is_cuda
+        assert batch_offsets.is_contiguous() and batch_offsets.is_cuda
+
+        while True:
+            idx = torch.cuda.IntTensor(n * meanActive).zero_()
+            start_len = torch.cuda.IntTensor(n, 2).zero_()
+            nActive = ops.ballquery_batch_p_boxiou(coords, batch_idxs, batch_offsets, idx, start_len, n,
+                                            meanActive, thresh_iou)
+            if nActive <= n * meanActive:
+                break
+            meanActive = int(nActive // n + 1)
+        idx = idx[:nActive]
+
+        return idx, start_len
+
+    @staticmethod
+    def backward(ctx, a=None, b=None):
+        return None, None, None
+
+
+ballquery_batch_p_boxiou = BallQueryBatchP_BoxIou.apply
+
 
 class BFSCluster(Function):
 

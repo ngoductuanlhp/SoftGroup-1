@@ -20,6 +20,15 @@ int ballquery_batch_p_cuda(int n, int meanActive, float radius,
                            const int *batch_offsets, int *idx, int *start_len,
                            cudaStream_t stream);
 
+int ballquery_batch_p_boxiou(at::Tensor xyz_tensor, at::Tensor batch_idxs_tensor,
+                      at::Tensor batch_offsets_tensor, at::Tensor idx_tensor,
+                      at::Tensor start_len_tensor, int n, int meanActive,
+                      float thresh_iou);
+int ballquery_batch_p_boxiou_cuda(int n, int meanActive, float thresh_iou,
+                           const float *xyz, const int *batch_idxs,
+                           const int *batch_offsets, int *idx, int *start_len,
+                           cudaStream_t stream);
+
 void bfs_cluster(at::Tensor class_numpoint_mean_tensor,
                  at::Tensor ball_query_idxs_tensor, at::Tensor start_len_tensor,
                  at::Tensor cluster_idxs_tensor,

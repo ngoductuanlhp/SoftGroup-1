@@ -158,8 +158,8 @@ def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
             zz1 = torch.index_select(z1, dim=0, index=sort_indices)
             zz2 = torch.index_select(z2, dim=0, index=sort_indices)
 
-            centroid_ = torch.index_select(centroid, dim=0, index=sort_indices)
-            pivot = centroid[[index]]
+            # centroid_ = torch.index_select(centroid, dim=0, index=sort_indices)
+            # pivot = centroid[[index]]
 
 
             xx1 = torch.max(xx1, x1[index])
@@ -180,9 +180,10 @@ def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
 
             IoU = inter / union
 
-            distances = torch.sum((pivot - centroid_)**2, -1)
+            # distances = torch.sum((pivot - centroid_)**2, -1)
 
-            mask = (IoU >= iou_thresh) | (distances < 0.016)
+            # mask = (IoU >= iou_thresh) | (distances < 0.016)
+            mask = (IoU >= iou_thresh)
             neighbor_indices = torch.nonzero(mask).view(-1)
             final_neighbor_indices = sort_indices[neighbor_indices]
 

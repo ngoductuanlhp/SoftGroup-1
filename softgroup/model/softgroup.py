@@ -6,7 +6,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..ops import (ballquery_batch_p, bfs_cluster, get_mask_iou_on_cluster, get_mask_iou_on_pred,
+from ..ops import (ballquery_batch_p, ballquery_batch_p_boxiou, bfs_cluster, get_mask_iou_on_cluster, get_mask_iou_on_pred,
                    get_mask_label, global_avg_pool, sec_max, sec_min, voxelization,
                    voxelization_idx)
 from ..util import cuda_cast, force_fp32, rle_encode
@@ -421,19 +421,22 @@ class SoftGroup(nn.Module):
             box_conf_ = box_conf[object_idxs]
             pt_offsets_vertices_ = pt_offsets_vertices[object_idxs]
 
+            # NOTE BALL QUERY
             # idx, start_len = ballquery_batch_p(coords_ + pt_offsets_, batch_idxs_, batch_offsets_,
             #                                    radius, mean_active)
-            # proposals_idx, proposals_offset = bfs_cluster(class_numpoint_mean, idx.cpu(),
-            #                                               start_len.cpu(), npoint_thr, class_id)
+            coords_box = coords_.repeat(1, 2) + pt_offsets_vertices_
 
-            box_conf_ = box_conf_ * scores[object_idxs]
-            proposals_idx, proposals_offset = non_maximum_cluster(box_conf_, coords_, pt_offsets_, pt_offsets_vertices_, batch_offsets_)
+            assert coords_box.shape[1] == 6
+            idx, start_len = ballquery_batch_p_boxiou(coords_box, batch_idxs_, batch_offsets_,
+                                               radius, mean_active)
+            proposals_idx, proposals_offset = bfs_cluster(class_numpoint_mean, idx.cpu(),
+                                                          start_len.cpu(), npoint_thr, class_id)
 
-            # merge proposals
-            # if len(proposals_offset_list) > 0 and proposals_idx.size(0) > 0:
-            #     proposals_idx[:, 0] += sum([x.size(0) for x in proposals_offset_list]) - 1
-            #     proposals_offset += proposals_offset_list[-1][-1]
-            #     proposals_offset = proposals_offset[1:]
+            # NOTE NMC
+            # box_conf_ = box_conf_ * scores[object_idxs]
+            # proposals_idx, proposals_offset = non_maximum_cluster(box_conf_, coords_, pt_offsets_, pt_offsets_vertices_, batch_offsets_)
+
+
             if len(proposals_idx) > 0:
                 proposals_idx[:, 1] = object_idxs[proposals_idx[:, 1].long()].int()
                 if len(proposals_offset_list) > 0:

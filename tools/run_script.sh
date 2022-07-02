@@ -3,13 +3,12 @@
 #SBATCH --output=/lustre/scratch/client/vinai/users/tuannd42/fewshot_ws/slurm_out/slurm_%A.out
 #SBATCH --error=/lustre/scratch/client/vinai/users/tuannd42/fewshot_ws/slurm_out/slurm_%A.err
 
-#SBATCH --gpus=1
-
+#SBATCH --gpus=2
 #SBATCH --nodes=1
 
-#SBATCH --mem-per-gpu=36G
+#SBATCH --mem-per-gpu=40G
 
-#SBATCH --cpus-per-gpu=16
+#SBATCH --cpus-per-gpu=64
 
 #SBATCH --partition=research
 #SBATCH --mail-type=all

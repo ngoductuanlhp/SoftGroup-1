@@ -89,9 +89,9 @@ save_cfg:
   offset_vertices: False
   nmc_clusters: True
 
-fp16: False
-epochs: 64
-step_epoch: 32
+fp16: True
+epochs: 32
+step_epoch: 16
 save_freq: 4
-pretrain: 'work_dirs/softgroup_scannet_bbox_context_head/iou_conf_nmc/best.pth'
+pretrain: 'pretrains/best_pretrain_bbox_context.pth'
 work_dir: ''
