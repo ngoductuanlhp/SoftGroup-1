@@ -72,11 +72,11 @@ data:
 
 dataloader:
   train:
-    batch_size: 8
-    num_workers: 8
+    batch_size: 16
+    num_workers: 32
   test:
     batch_size: 1
-    num_workers: 8
+    num_workers: 32
 
 optimizer:
   type: 'Adam'
@@ -89,9 +89,9 @@ save_cfg:
   offset_vertices: False
   nmc_clusters: True
 
-fp16: True
-epochs: 32
-step_epoch: 16
+fp16: False
+epochs: 64
+step_epoch: 32
 save_freq: 4
-pretrain: 'pretrains/best_bbox_context_box_conf.pth'
+pretrain: 'pretrains/best_bbox_context_nmc.pth'
 work_dir: ''
