@@ -427,7 +427,7 @@ class SoftGroup(nn.Module):
             #                                               start_len.cpu(), npoint_thr, class_id)
 
             box_conf_ = box_conf_ * scores[object_idxs]
-            proposals_idx, proposals_offset = non_maximum_cluster(box_conf_, coords_, pt_offsets_vertices_, batch_offsets_)
+            proposals_idx, proposals_offset = non_maximum_cluster(box_conf_, coords_, pt_offsets_, pt_offsets_vertices_, batch_offsets_)
 
             # merge proposals
             # if len(proposals_offset_list) > 0 and proposals_idx.size(0) > 0:
