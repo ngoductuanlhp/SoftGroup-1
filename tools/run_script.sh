@@ -1,5 +1,5 @@
 #!/bin/bash -e
-#SBATCH --job-name=softg01
+#SBATCH --job-name=softg_c
 #SBATCH --output=/lustre/scratch/client/vinai/users/tuannd42/fewshot_ws/slurm_out/slurm_%A.out
 #SBATCH --error=/lustre/scratch/client/vinai/users/tuannd42/fewshot_ws/slurm_out/slurm_%A.err
 
@@ -17,4 +17,4 @@
 srun --container-image="harbor.vinai-systems.com#research/tuannd42:softgroup" \
 --container-mounts=/lustre/scratch/client/vinai/users/tuannd42/fewshot_ws/SoftGroup:/home/ubuntu/SoftGroup \
 --container-workdir=/home/ubuntu/SoftGroup/ \
-python3 tools/train.py configs/softgroup_scannet_bbox_context_head.yaml --exp_name iou_conf_nmc_thresh0.1
+python3 tools/train.py configs/softgroup_scannet_bbox_context_head.yaml --exp_name iou_conf_nmc_combine
