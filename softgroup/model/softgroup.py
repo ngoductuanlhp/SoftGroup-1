@@ -385,6 +385,7 @@ class SoftGroup(nn.Module):
             x_new[p] = x_split[i]
         return x_new
 
+    @torch.no_grad()
     @force_fp32(apply_to=('semantic_scores, pt_offsets'))
     def forward_grouping(self,
                          semantic_scores,
@@ -393,6 +394,8 @@ class SoftGroup(nn.Module):
                          batch_idxs,
                          coords_float,
                          grouping_cfg=None):
+
+
         proposals_idx_list = []
         proposals_offset_list = []
         batch_size = batch_idxs.max() + 1

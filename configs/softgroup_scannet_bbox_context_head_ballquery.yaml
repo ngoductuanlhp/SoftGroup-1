@@ -7,7 +7,7 @@ model:
   semantic_only: False
   ignore_label: -100
   grouping_cfg:
-    box_iou_thresh: 0.9
+    box_iou_thresh: 0.95
     score_thr: 0.2
     radius: 0.04
     mean_active: 300
@@ -21,7 +21,7 @@ model:
     scale: 50
     spatial_shape: 20
   train_cfg:
-    max_proposal_num: 400
+    max_proposal_num: 800
     pos_iou_thr: 0.5
     focal_loss: False
     dice_loss: False
@@ -73,8 +73,8 @@ data:
 
 dataloader:
   train:
-    batch_size: 4
-    num_workers: 16
+    batch_size: 16
+    num_workers: 32
   test:
     batch_size: 1
     num_workers: 16
@@ -94,5 +94,5 @@ fp16: True
 epochs: 32
 step_epoch: 16
 save_freq: 4
-pretrain: 'work_dirs/softgroup_scannet_bbox_context/iou_conf/best.pth'
+pretrain: 'pretrains/best_pretrain_bbox_context_iou_conf.pth'
 work_dir: ''
