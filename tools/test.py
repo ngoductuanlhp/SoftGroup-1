@@ -88,25 +88,29 @@ def main():
     logger.info(f'Load state dict from {args.checkpoint}')
     load_checkpoint(args.checkpoint, logger, model)
 
-    dataset = build_dataset(cfg.data.test, logger)
+    dataset = build_dataset(cfg.data.test, logger, lite=args.save_lite)
     dataloader = build_dataloader(dataset, training=False, dist=args.dist, **cfg.dataloader.test)
     results = []
     scan_ids, coords, sem_preds, sem_labels, offset_preds, offset_vertices_preds, offset_labels = [], [], [], [], [], [], []
     nmc_clusters = []
     inst_labels, pred_insts, gt_insts = [], [], []
     _, world_size = get_dist_info()
-    progress_bar = tqdm(total=len(dataloader) * world_size, disable=not is_main_process())
+
+    # progress_bar = tqdm(total=len(dataloader) * world_size, disable=not is_main_process())
     with torch.no_grad():
         model.eval()
         for i, batch in enumerate(dataloader):
-            if args.save_lite and i % 10 != 0:
-                continue
+            # if args.save_lite and i % 10 != 0:
+            #     continue
 
             with torch.cuda.amp.autocast(enabled=cfg.fp16):
                 result = model(batch)
             results.append(result)
-            progress_bar.update(world_size)
-        progress_bar.close()
+
+            if i % 10 == 0:
+                logger.info(f'Infer scene {i+1}/{len(dataloader)}')
+        #     progress_bar.update(world_size)
+        # progress_bar.close()
         results = collect_results_gpu(results, len(dataset))
     if is_main_process():
         point_eval = PointWiseEval()
@@ -161,7 +165,7 @@ def main():
             save_pred_instances(args.out, 'pred_instance', scan_ids, pred_insts)
             # save_gt_instances(args.out, 'gt_instance', scan_ids, gt_insts)
         if cfg.save_cfg.nmc_clusters:
-            save_npy(args.out, 'nmc_clusters', scan_ids, nmc_clusters)
+            save_npy(args.out, 'nmc_clusters_ballquery', scan_ids, nmc_clusters)
 
 
 if __name__ == '__main__':

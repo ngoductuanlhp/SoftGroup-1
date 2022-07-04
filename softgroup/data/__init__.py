@@ -7,10 +7,11 @@ from .scannetv2 import ScanNetDataset
 __all__ = ['S3DISDataset', 'ScanNetDataset', 'build_dataset']
 
 
-def build_dataset(data_cfg, logger):
+def build_dataset(data_cfg, logger, lite=False):
     assert 'type' in data_cfg
     _data_cfg = data_cfg.copy()
     _data_cfg['logger'] = logger
+    _data_cfg['lite'] = lite
     data_type = _data_cfg.pop('type')
     if data_type == 's3dis':
         return S3DISDataset(**_data_cfg)

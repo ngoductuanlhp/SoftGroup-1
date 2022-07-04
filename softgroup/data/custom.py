@@ -22,7 +22,8 @@ class CustomDataset(Dataset):
                  voxel_cfg=None,
                  training=True,
                  repeat=1,
-                 logger=None):
+                 logger=None,
+                 lite=False):
         self.data_root = data_root
         self.prefix = prefix
         self.suffix = suffix
@@ -31,7 +32,12 @@ class CustomDataset(Dataset):
         self.repeat = repeat
         self.logger = logger
         self.mode = 'train' if training else 'test'
+        self.lite = lite
         self.filenames = self.get_filenames()
+
+        if self.lite:
+            self.logger.info('Only load lite dataset (/10)')
+            self.filenames = self.filenames[::10]
         self.logger.info(f'Load {self.mode} dataset: {len(self.filenames)} scans')
 
         # self.filenames = self.filenames[:50]

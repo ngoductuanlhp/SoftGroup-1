@@ -30,18 +30,19 @@ int ballquery_batch_p(at::Tensor xyz_tensor, at::Tensor batch_idxs_tensor,
   return cumsum;
 }
 
-int ballquery_batch_p_boxiou(at::Tensor xyz_tensor, at::Tensor batch_idxs_tensor,
+int ballquery_batch_p_boxiou(at::Tensor xyz_tensor_min, at::Tensor xyz_tensor_max, at::Tensor batch_idxs_tensor,
                       at::Tensor batch_offsets_tensor, at::Tensor idx_tensor,
                       at::Tensor start_len_tensor, int n, int meanActive,
                       float radius) {
-  const float *xyz = xyz_tensor.data_ptr<float>();
+  const float *xyz_min = xyz_tensor_min.data_ptr<float>();
+  const float *xyz_max = xyz_tensor_max.data_ptr<float>();
   const int *batch_idxs = batch_idxs_tensor.data_ptr<int>();
   const int *batch_offsets = batch_offsets_tensor.data_ptr<int>();
   int *idx = idx_tensor.data_ptr<int>();
   int *start_len = start_len_tensor.data_ptr<int>();
 
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
-  int cumsum = ballquery_batch_p_cuda(n, meanActive, radius, xyz, batch_idxs,
+  int cumsum = ballquery_batch_p_boxiou_cuda(n, meanActive, radius, xyz_min, xyz_max, batch_idxs,
                                       batch_offsets, idx, start_len, stream);
   return cumsum;
 }

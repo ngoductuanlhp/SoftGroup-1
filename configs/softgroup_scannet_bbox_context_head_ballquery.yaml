@@ -7,7 +7,7 @@ model:
   semantic_only: False
   ignore_label: -100
   grouping_cfg:
-    box_iou_thresh: 0.95
+    box_iou_thresh: 0.2
     score_thr: 0.2
     radius: 0.04
     mean_active: 300
@@ -74,7 +74,7 @@ data:
 dataloader:
   train:
     batch_size: 16
-    num_workers: 32
+    num_workers: 16
   test:
     batch_size: 1
     num_workers: 16

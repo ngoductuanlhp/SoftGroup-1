@@ -27,9 +27,9 @@ model:
     cls_score_thr: 0.001
     mask_score_thr: -0.5
     min_npoint: 100
-  fixed_modules: ['input_conv', 'unet', 'output_layer', 'semantic_linear', 'offset_linear', 'offset_vertices_linear']
-  # fixed_modules: []
-  embedding_coord: True
+  # fixed_modules: ['input_conv', 'unet', 'output_layer', 'semantic_linear', 'offset_linear', 'offset_vertices_linear']
+  fixed_modules: []
+  embedding_coord: False
   
 data:
   train:
@@ -71,10 +71,10 @@ data:
 dataloader:
   train:
     batch_size: 8
-    num_workers: 8
+    num_workers: 16
   test:
     batch_size: 1
-    num_workers: 1
+    num_workers: 16
 
 optimizer:
   type: 'Adam'
@@ -87,8 +87,8 @@ save_cfg:
   offset_vertices: True
 
 fp16: True
-epochs: 16
-step_epoch: 8
+epochs: 64
+step_epoch: 32
 save_freq: 4
-pretrain: 'pretrains/best_pretrain_bbox_context.pth'
+pretrain: 'pretrains/best_pretrain_bbox_context_iou_conf.pth'
 work_dir: ''
