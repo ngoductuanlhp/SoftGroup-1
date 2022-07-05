@@ -12,7 +12,7 @@ from ..ops import (ballquery_batch_p, ballquery_batch_p_boxiou, bfs_cluster, get
 from ..util import cuda_cast, force_fp32, rle_encode
 from .blocks import MLP, ResidualBlock, UBlock, PositionalEmbedding
 from .model_utils import iou_aabb, compute_dice_loss, sigmoid_focal_loss, non_maximum_cluster
-
+import numpy as np
 
 
 
@@ -22,6 +22,7 @@ class SoftGroup(nn.Module):
                  channels=32,
                  num_blocks=7,
                  semantic_only=False,
+                 eval_box=False,
                  semantic_classes=20,
                  instance_classes=18,
                  sem2ins_classes=[],
@@ -46,6 +47,7 @@ class SoftGroup(nn.Module):
         self.test_cfg = test_cfg
         self.fixed_modules = fixed_modules
         self.embedding_coord = embedding_coord
+        self.eval_box = eval_box
         
 
         if self.embedding_coord:
@@ -325,7 +327,7 @@ class SoftGroup(nn.Module):
                                                               **self.instance_voxel_cfg)
             _, cls_scores, iou_scores, mask_scores = self.forward_instance(inst_feats, inst_map)
             pred_instances = self.get_instances(scan_ids[0], proposals_idx, semantic_scores,
-                                                cls_scores, iou_scores, mask_scores)
+                                                cls_scores, iou_scores, mask_scores, coords_float)
             gt_instances = self.get_gt_instances(semantic_labels, instance_labels)
             ret.update(dict(pred_instances=pred_instances, gt_instances=gt_instances))
 
@@ -514,7 +516,7 @@ class SoftGroup(nn.Module):
 
     @force_fp32(apply_to=('semantic_scores', 'cls_scores', 'iou_scores', 'mask_scores'))
     def get_instances(self, scan_id, proposals_idx, semantic_scores, cls_scores, iou_scores,
-                      mask_scores):
+                      mask_scores, coords_float):
         num_instances = cls_scores.size(0)
         num_points = semantic_scores.size(0)
         cls_scores = cls_scores.softmax(1)

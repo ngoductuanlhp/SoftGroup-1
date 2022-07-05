@@ -16,7 +16,7 @@ from softgroup.util import (collect_results_gpu, get_dist_info, get_root_logger,
                             is_main_process, load_checkpoint, rle_decode)
 from torch.nn.parallel import DistributedDataParallel
 from tqdm import tqdm
-
+from eval_det import CLASS_LABELS, VALID_CLASS_IDS, eval_sphere
 
 def get_args():
     parser = argparse.ArgumentParser('SoftGroup')
@@ -94,6 +94,8 @@ def main():
     scan_ids, coords, sem_preds, sem_labels, offset_preds, offset_vertices_preds, offset_labels = [], [], [], [], [], [], []
     nmc_clusters = []
     inst_labels, pred_insts, gt_insts = [], [], []
+    box_preds, box_gt = {}, {}
+
     _, world_size = get_dist_info()
 
     # progress_bar = tqdm(total=len(dataloader) * world_size, disable=not is_main_process())
@@ -134,13 +136,40 @@ def main():
                 offset_preds.append(res['offset_preds'])
             if cfg.save_cfg.nmc_clusters:
                 nmc_clusters.append(res['nmc_clusters'])
+
             if not cfg.model.semantic_only:
                 pred_insts.append(res['pred_instances'])
                 gt_insts.append(res['gt_instances'])
+
+            if not cfg.model.semantic_only and cfg.model.eval_box:
+                box_preds[res['scan_id']] = []
+                for pred in res['pred_instances']:
+                    box_preds[res['scan_id']].append((CLASS_LABELS[int(pred['label_id']-1)], pred['box'], pred['conf']))
+                
+                box_gt[res['scan_id']] = []
+
+                instance_num = int(res['instance_labels'].max()) + 1
+                for i in range(instance_num):
+                    inds = res['instance_labels'] == i
+                    gt_label_loc = np.nonzero(inds)[0][0]
+                    cls_id = int(res['semantic_preds'][gt_label_loc])
+                    if cls_id >= 2:
+                        instance = res['coords_float'][inds]
+                        box_min = instance.min(0)
+                        box_max = instance.max(0)
+                        box = np.concatenate([box_min, box_max])
+                        class_name = CLASS_LABELS[cls_id - 2]
+                        box_gt[res['scan_id']].append((class_name, box))
+        
         if not cfg.model.semantic_only:
             logger.info('Evaluate instance segmentation')
             scannet_eval = ScanNetEval(dataset.CLASSES)
             scannet_eval.evaluate(pred_insts, gt_insts)
+
+            if not cfg.model.semantic_only and cfg.model.eval_box:
+                logger.info('Evaluate axis-align box prediction')
+                scannet_eval.evaluate_box(pred_insts, gt_insts, coords)
+
         logger.info('Evaluate semantic segmentation and offset MAE')
         ignore_label = cfg.model.ignore_label
         miou, acc, mae = point_eval.get_eval(logger)
