@@ -14,7 +14,12 @@
 #SBATCH --mail-type=all
 #SBATCH --mail-user=v.tuannd42@vinai.io
 
+# srun --container-image="harbor.vinai-systems.com#research/tuannd42:softgroup" \
+# --container-mounts=/lustre/scratch/client/vinai/users/tuannd42/fewshot_ws/SoftGroup:/home/ubuntu/SoftGroup \
+# --container-workdir=/home/ubuntu/SoftGroup/ \
+# python3 tools/train.py configs/softgroup_scannet_bbox_context_head_ballquery.yaml --exp_name thresh0.95
+
 srun --container-image="harbor.vinai-systems.com#research/tuannd42:softgroup" \
 --container-mounts=/lustre/scratch/client/vinai/users/tuannd42/fewshot_ws/SoftGroup:/home/ubuntu/SoftGroup \
 --container-workdir=/home/ubuntu/SoftGroup/ \
-python3 tools/train.py configs/softgroup_scannet_bbox_context_head_ballquery.yaml --exp_name thresh0.95
+python3 tools/train.py configs/softgroup_scannet_bbox_context_lite16.yaml --exp_name box_conf_lite16

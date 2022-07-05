@@ -89,11 +89,11 @@ class SoftGroup(nn.Module):
             for param in mod.parameters():
                 param.requires_grad = False
 
-        if 'input_conv' in self.fixed_modules and 'unet' in self.fixed_modules:
-            self.freeze_backbone = True
-        else:
-            self.freeze_backbone = False
-        # self.freeze_backbone = False
+        # if 'input_conv' in self.fixed_modules and 'unet' in self.fixed_modules:
+        #     self.freeze_backbone = True
+        # else:
+        #     self.freeze_backbone = False
+        self.freeze_backbone = False
 
 
 
@@ -611,6 +611,8 @@ class SoftGroup(nn.Module):
         coords = torch.cat([clusters_idx[:, 0].view(-1, 1).long(), coords.cpu()], 1)
 
         out_coords, inp_map, out_map = voxelization_idx(coords, int(clusters_idx[-1, 0]) + 1)
+
+
         out_feats = voxelization(feats, out_map.cuda())
         spatial_shape = [spatial_shape] * 3
         voxelization_feats = spconv.SparseConvTensor(out_feats,
