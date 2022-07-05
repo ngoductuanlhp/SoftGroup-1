@@ -109,6 +109,40 @@ def iou_aabb_single(coords_min_pivot, coords_max_pivot, coords_min_neighbors, co
     iou = intersection / union
     return iou
 
+def cal_iou(volumes, x1, y1, z1, x2, y2, z2, sort_indices, index):
+    rem_volumes = torch.index_select(volumes, dim=0, index=sort_indices)
+
+    xx1 = torch.index_select(x1, dim=0, index=sort_indices)
+    xx2 = torch.index_select(x2, dim=0, index=sort_indices)
+    yy1 = torch.index_select(y1, dim=0, index=sort_indices)
+    yy2 = torch.index_select(y2, dim=0, index=sort_indices)
+    zz1 = torch.index_select(z1, dim=0, index=sort_indices)
+    zz2 = torch.index_select(z2, dim=0, index=sort_indices)
+
+    # centroid_ = torch.index_select(centroid, dim=0, index=sort_indices)
+    # pivot = centroid[[index]]
+
+
+    xx1 = torch.max(xx1, x1[index])
+    yy1 = torch.max(yy1, y1[index])
+    zz1 = torch.max(zz1, z1[index])
+    xx2 = torch.min(xx2, x2[index])
+    yy2 = torch.min(yy2, y2[index])
+    zz2 = torch.min(zz2, z2[index])
+
+
+    l = torch.clamp(xx2 - xx1, min=0.0)
+    w = torch.clamp(yy2 - yy1, min=0.0)
+    h = torch.clamp(zz2 - zz1, min=0.0)
+
+    inter = w*h*l
+
+    union = (rem_volumes - inter) + volumes[index]
+
+    IoU = inter / union
+
+    return IoU
+
 @torch.no_grad()
 def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch_offsets, radius=6**2, mean_active=300, iou_thresh=0.3):
     # box_conf: N
@@ -123,6 +157,7 @@ def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
     # proposals_offset = [0]
     proposals_conf = []
     proposals_indices = []
+    proposal_boxes = []
 
     # cluster_id = 0
 
@@ -143,11 +178,20 @@ def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
 
         sort_indices = torch.argsort(box_conf[batch_start:batch_end], descending=True)
 
+        # visited = torch.zeros((batch_end - batch_start), dtype=torch.bool, device=box_conf.device)
+
 
         while len(sort_indices) > mean_active:
             index = sort_indices[0]
-
             sort_indices = sort_indices[1:]
+            # while len(sort_indices) > 0:
+            #     index = sort_indices[0]
+            #     sort_indices = sort_indices[1:]
+            #     if visited[index] == False:
+            #         break
+            # if len(sort_indices) < 50:
+            #     break
+                    
 
             rem_volumes = torch.index_select(volumes, dim=0, index=sort_indices)
 
@@ -188,27 +232,27 @@ def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
             final_neighbor_indices = sort_indices[neighbor_indices]
 
             cluster_indices = torch.cat([final_neighbor_indices, index.unsqueeze(0)])
+            cluster_indices_clone = cluster_indices.clone()
             cluster_indices = cluster_indices + batch_start
             len_cluster = len(cluster_indices)
 
             if len_cluster > mean_active:
-                # proposals_offset.append(proposals_offset[-1] + len_cluster)
-                # # proposals_offset.append(len_cluster)
-                # proposals_idx_ = torch.stack([torch.ones_like(cluster_indices) * cluster_id, cluster_indices], -1)
-                # proposals_idx.append(proposals_idx_)
-                # proposals_conf.append(box_conf[index+batch_start])
-                # cluster_id += 1
 
                 proposals_conf.append(box_conf[index+batch_start])
                 proposals_indices.append(cluster_indices)
 
+                box = torch.tensor([x1[index], y1[index], z1[index], x2[index], y2[index], z2[index]])
+                proposal_boxes.append(box)
+
+
             sort_indices = sort_indices[~mask]
 
     if len(proposals_indices) == 0:
-        return [], [0]
+        return [], [0], None, None
 
     proposals_conf = torch.tensor(proposals_conf)
     proposals_sort_indices = torch.argsort(proposals_conf, descending=True).long()
+    proposals_conf_final = proposals_conf[proposals_sort_indices]
 
     # breakpoint()
     # proposals_idx = torch.cat(proposals_idx[proposals_sort_indices])
@@ -216,18 +260,164 @@ def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
     cluster_id = 0
     proposals_idx_final = []
     proposals_offset_final = [0]
-    for i in range(len(proposals_conf)):
+    proposals_box_final = []
+    for i in range(len(proposals_sort_indices)):
         proposals_offset_final.append(proposals_offset_final[-1] + len(proposals_indices[proposals_sort_indices[i]]))
         proposals_idx_final.append(torch.stack([torch.ones_like(proposals_indices[proposals_sort_indices[i]]) * cluster_id, proposals_indices[proposals_sort_indices[i]]], -1))
+        proposals_box_final.append(proposal_boxes[proposals_sort_indices[i]])
         cluster_id += 1
-        # proposals_idx_final.append(proposals_idx[proposals_sort_indices[i]])
-    # proposals_offset = torch.tensor(proposals_offset[proposals_sort_indices])
 
     proposals_idx_final = torch.cat(proposals_idx_final)
     proposals_offset_final = torch.tensor(proposals_offset_final)
+    proposals_box_final = torch.stack(proposals_box_final, 0) # nProposals, 6
 
     # breakpoint()
-    return proposals_idx_final.cpu().int(), proposals_offset_final.cpu().int()
+    return proposals_idx_final.cpu().int(), proposals_offset_final.cpu().int(), proposals_box_final, proposals_conf_final
+
+@torch.no_grad()
+def non_maximum_cluster2(box_conf, coords, pt_offsets, pt_offsets_vertices, batch_offsets, radius=6**2, mean_active=300, iou_thresh=0.3):
+    # box_conf: N
+    n_points = box_conf.shape[0]
+    batch_size = len(batch_offsets) - 1
+
+    coords_centroid = coords + pt_offsets
+    coords_min = coords + pt_offsets_vertices[:, :3]
+    coords_max = coords + pt_offsets_vertices[:, 3:]
+
+    # proposals_idx = []
+    # proposals_offset = [0]
+    proposals_conf = []
+    proposals_indices = []
+    proposal_boxes = []
+
+    # cluster_id = 0
+
+    for b in range(batch_size):
+        batch_start = batch_offsets[b]
+        batch_end = batch_offsets[b + 1]
+
+        xm = coords_centroid[batch_start:batch_end, 0]
+        ym = coords_centroid[batch_start:batch_end, 1]
+        zm = coords_centroid[batch_start:batch_end, 2]
+
+        x1 = coords_min[batch_start:batch_end, 0]
+        y1 = coords_min[batch_start:batch_end, 1]
+        z1 = coords_min[batch_start:batch_end, 2]
+        x2 = coords_max[batch_start:batch_end, 0]
+        y2 = coords_max[batch_start:batch_end, 1]
+        z2 = coords_max[batch_start:batch_end, 2]
+
+        volumes1 = (xm - x1) * (ym - y1) * (zm - z1)
+        volumes2 = (x2 - xm) * (y2 - ym) * (z2 - zm)
+        volumes3 = (x2 - x1) * (y2 - y1) * (z2 - z1)
+
+
+
+        sort_indices = torch.argsort(box_conf[batch_start:batch_end], descending=True)
+
+        # visited = torch.zeros((batch_end - batch_start), dtype=torch.bool, device=box_conf.device)
+
+
+        while len(sort_indices) > mean_active:
+            index = sort_indices[0]
+            sort_indices = sort_indices[1:]
+            # while len(sort_indices) > 0:
+            #     index = sort_indices[0]
+            #     sort_indices = sort_indices[1:]
+            #     if visited[index] == False:
+            #         break
+            # if len(sort_indices) < 50:
+            #     break
+                    
+            iou1 = cal_iou(volumes1, x1, y1, z1, xm, ym, zm, sort_indices, index)
+            iou2 = cal_iou(volumes2, xm, ym, zm, x2, y2, z2, sort_indices, index)
+            iou3 = cal_iou(volumes3, x1, y1, z1, x2, y2, z2, sort_indices, index)
+
+            # IoU = (iou1 + iou2) / 2.0
+            IoU = torch.maximum(torch.maximum(iou1, iou2), iou3)
+            # rem_volumes = torch.index_select(volumes, dim=0, index=sort_indices)
+
+            # xx1 = torch.index_select(x1, dim=0, index=sort_indices)
+            # xx2 = torch.index_select(x2, dim=0, index=sort_indices)
+            # yy1 = torch.index_select(y1, dim=0, index=sort_indices)
+            # yy2 = torch.index_select(y2, dim=0, index=sort_indices)
+            # zz1 = torch.index_select(z1, dim=0, index=sort_indices)
+            # zz2 = torch.index_select(z2, dim=0, index=sort_indices)
+
+            # # centroid_ = torch.index_select(centroid, dim=0, index=sort_indices)
+            # # pivot = centroid[[index]]
+
+
+            # xx1 = torch.max(xx1, x1[index])
+            # yy1 = torch.max(yy1, y1[index])
+            # zz1 = torch.max(zz1, z1[index])
+            # xx2 = torch.min(xx2, x2[index])
+            # yy2 = torch.min(yy2, y2[index])
+            # zz2 = torch.min(zz2, z2[index])
+
+
+            # l = torch.clamp(xx2 - xx1, min=0.0)
+            # w = torch.clamp(yy2 - yy1, min=0.0)
+            # h = torch.clamp(zz2 - zz1, min=0.0)
+
+            # inter = w*h*l
+
+            # union = (rem_volumes - inter) + volumes[index]
+
+            # IoU = inter / union
+
+            # distances = torch.sum((pivot - centroid_)**2, -1)
+
+            # mask = (IoU >= iou_thresh) | (distances < 0.016)
+            # mask = (IoU >= iou_thresh)
+            mask = (iou3 >= iou_thresh) | (iou1 >= 0.5) | (iou2 >= 0.5)
+            neighbor_indices = torch.nonzero(mask).view(-1)
+            final_neighbor_indices = sort_indices[neighbor_indices]
+
+            cluster_indices = torch.cat([final_neighbor_indices, index.unsqueeze(0)])
+            cluster_indices_clone = cluster_indices.clone()
+            cluster_indices = cluster_indices + batch_start
+            len_cluster = len(cluster_indices)
+
+            if len_cluster > mean_active:
+
+                proposals_conf.append(box_conf[index+batch_start])
+                proposals_indices.append(cluster_indices)
+
+                box = torch.tensor([x1[index], y1[index], z1[index], x2[index], y2[index], z2[index]])
+                proposal_boxes.append(box)
+
+
+            sort_indices = sort_indices[~mask]
+
+    if len(proposals_indices) == 0:
+        return [], [0], None, None
+
+    proposals_conf = torch.tensor(proposals_conf)
+    proposals_sort_indices = torch.argsort(proposals_conf, descending=True).long()
+    proposals_conf_final = proposals_conf[proposals_sort_indices]
+
+    # breakpoint()
+    # proposals_idx = torch.cat(proposals_idx[proposals_sort_indices])
+    # proposals_offset = proposals_offset[proposals_sort_indices]
+    cluster_id = 0
+    proposals_idx_final = []
+    proposals_offset_final = [0]
+    proposals_box_final = []
+    for i in range(len(proposals_sort_indices)):
+        proposals_offset_final.append(proposals_offset_final[-1] + len(proposals_indices[proposals_sort_indices[i]]))
+        proposals_idx_final.append(torch.stack([torch.ones_like(proposals_indices[proposals_sort_indices[i]]) * cluster_id, proposals_indices[proposals_sort_indices[i]]], -1))
+        proposals_box_final.append(proposal_boxes[proposals_sort_indices[i]])
+        cluster_id += 1
+
+    proposals_idx_final = torch.cat(proposals_idx_final)
+    proposals_offset_final = torch.tensor(proposals_offset_final)
+    proposals_box_final = torch.stack(proposals_box_final, 0) # nProposals, 6
+
+    # breakpoint()
+    return proposals_idx_final.cpu().int(), proposals_offset_final.cpu().int(), proposals_box_final, proposals_conf_final
+
+
 
 
 

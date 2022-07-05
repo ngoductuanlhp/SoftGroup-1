@@ -11,7 +11,7 @@ from ..ops import (ballquery_batch_p, ballquery_batch_p_boxiou, bfs_cluster, get
                    voxelization_idx)
 from ..util import cuda_cast, force_fp32, rle_encode
 from .blocks import MLP, ResidualBlock, UBlock, PositionalEmbedding
-from .model_utils import iou_aabb, compute_dice_loss, sigmoid_focal_loss, non_maximum_cluster
+from .model_utils import iou_aabb, compute_dice_loss, sigmoid_focal_loss, non_maximum_cluster, non_maximum_cluster2
 import numpy as np
 
 
@@ -22,7 +22,6 @@ class SoftGroup(nn.Module):
                  channels=32,
                  num_blocks=7,
                  semantic_only=False,
-                 eval_box=False,
                  semantic_classes=20,
                  instance_classes=18,
                  sem2ins_classes=[],
@@ -47,7 +46,6 @@ class SoftGroup(nn.Module):
         self.test_cfg = test_cfg
         self.fixed_modules = fixed_modules
         self.embedding_coord = embedding_coord
-        self.eval_box = eval_box
         
 
         if self.embedding_coord:
@@ -311,7 +309,7 @@ class SoftGroup(nn.Module):
             offset_labels=pt_offset_labels.cpu().numpy(),
             instance_labels=instance_labels.cpu().numpy())
         if not self.semantic_only:
-            proposals_idx, proposals_offset = self.forward_grouping(semantic_scores, pt_offsets, pt_offsets_vertices, box_conf,
+            proposals_idx, proposals_offset, proposals_box, proposals_conf, proposals_cls = self.forward_grouping(semantic_scores, pt_offsets, pt_offsets_vertices, box_conf,
                                                                     batch_idxs, coords_float,
                                                                     self.grouping_cfg)
 
@@ -320,6 +318,25 @@ class SoftGroup(nn.Module):
             for idx in range(proposals_offset.shape[0]-1):
                 nmc_clusters[proposals_idx[proposals_offset[idx]:proposals_offset[idx+1],1].long()] = idx
             ret['nmc_clusters'] = nmc_clusters.cpu().numpy()
+
+            proposals_box = proposals_box.cpu().numpy()
+            proposals_conf = proposals_conf.cpu().numpy()
+            proposals_cls = proposals_cls.cpu().numpy()
+
+            nmc_instances = []
+            for i in range(proposals_cls.shape[0]):
+                pred = {}
+                pred['scan_id'] = scan_ids[0]
+                pred['label_id'] = proposals_cls[i]
+                pred['conf'] = proposals_conf[i]
+                # rle encode mask to save memory
+                mask_pred = torch.zeros((feats.shape[0]), dtype=torch.int).to(feats.device)
+                mask_pred[proposals_idx[proposals_offset[i]:proposals_offset[i+1],1].long()] = 1
+
+                pred['pred_mask'] = rle_encode(mask_pred.cpu().numpy())
+                pred['box'] = proposals_box[i]
+                nmc_instances.append(pred)
+            ret.update(dict(nmc_instances=nmc_instances))
 
 
             inst_feats, inst_map = self.clusters_voxelization(proposals_idx, proposals_offset,
@@ -400,6 +417,9 @@ class SoftGroup(nn.Module):
 
         proposals_idx_list = []
         proposals_offset_list = []
+        proposals_box_list = []
+        proposals_cls_list = []
+        proposals_conf_list = []
         batch_size = batch_idxs.max() + 1
         semantic_scores = semantic_scores.softmax(dim=-1)
 
@@ -443,7 +463,7 @@ class SoftGroup(nn.Module):
 
             # NOTE NMC
             box_conf_ = box_conf_ * scores[object_idxs]
-            proposals_idx, proposals_offset = non_maximum_cluster(box_conf_, coords_, pt_offsets_, pt_offsets_vertices_, batch_offsets_, iou_thresh=self.grouping_cfg.iou_thresh)
+            proposals_idx, proposals_offset, proposals_box, proposals_conf = non_maximum_cluster2(box_conf_, coords_, pt_offsets_, pt_offsets_vertices_, batch_offsets_, mean_active=self.grouping_cfg.mean_active_nmc, iou_thresh=self.grouping_cfg.iou_thresh)
 
             # TODO measure mAP, mAR
 
@@ -456,6 +476,9 @@ class SoftGroup(nn.Module):
 
                 proposals_idx_list.append(proposals_idx)
                 proposals_offset_list.append(proposals_offset)
+                proposals_box_list.append(proposals_box)
+                proposals_conf_list.append(proposals_conf)
+                proposals_cls_list.append(torch.ones((proposals_box.shape[0]), dtype=torch.int, device=proposals_box.device) * (class_id - 2 + 1))
 
             # score_pred, class_pred = torch.max(semantic_scores, 1)
             # object_idxs = torch.nonzero(class_pred > 1).view(-1)
@@ -493,10 +516,118 @@ class SoftGroup(nn.Module):
         
         proposals_idx = torch.cat(proposals_idx_list, dim=0)
         proposals_offset = torch.cat(proposals_offset_list)
+        proposals_box_list = torch.cat(proposals_box_list, dim=0) # nTotal, 6
+        proposals_conf_list = torch.cat(proposals_conf_list, dim=0) # nTotal
+        proposals_cls_list = torch.cat(proposals_cls_list, dim=0) # nTotal
 
         # breakpoint()
         # print('num nmc clusters', proposals_offset.shape)
-        return proposals_idx, proposals_offset
+        return proposals_idx, proposals_offset, proposals_box_list, proposals_conf_list, proposals_cls_list
+
+    @torch.no_grad()
+    @force_fp32(apply_to=('semantic_scores, pt_offsets'))
+    def forward_grouping_origin(self,
+                         semantic_scores,
+                         pt_offsets,
+                         pt_offsets_vertices, box_conf,
+                         batch_idxs,
+                         coords_float,
+                         grouping_cfg=None):
+
+
+        proposals_idx_list = []
+        proposals_offset_list = []
+        proposals_box_list = []
+        proposals_cls_list = []
+        proposals_conf_list = []
+        batch_size = batch_idxs.max() + 1
+        semantic_scores = semantic_scores.softmax(dim=-1)
+
+        # box_iou_thresh = self.grouping_cfg.box_iou_thresh
+        radius = self.grouping_cfg.radius
+        mean_active = self.grouping_cfg.mean_active
+        npoint_thr = self.grouping_cfg.npoint_thr
+        class_numpoint_mean = torch.tensor(
+            self.grouping_cfg.class_numpoint_mean, dtype=torch.float32)
+
+
+        for class_id in range(self.semantic_classes):
+            if class_id in self.grouping_cfg.ignore_classes:
+                continue
+            scores = semantic_scores[:, class_id].contiguous()
+
+            # object_idxs = (scores > self.grouping_cfg.score_thr).nonzero().view(-1)
+            object_idxs = torch.nonzero(scores > self.grouping_cfg.score_thr).view(-1)
+            if object_idxs.size(0) < self.test_cfg.min_npoint:
+                continue
+            batch_idxs_ = batch_idxs[object_idxs]
+            batch_offsets_ = self.get_batch_offsets(batch_idxs_, batch_size)
+            coords_ = coords_float[object_idxs]
+            pt_offsets_ = pt_offsets[object_idxs]
+            box_conf_ = box_conf[object_idxs]
+            pt_offsets_vertices_ = pt_offsets_vertices[object_idxs]
+
+                # NOTE BALL QUERY
+                # idx, start_len = ballquery_batch_p(coords_ + pt_offsets_, batch_idxs_, batch_offsets_,
+                #                                    radius, mean_active)
+                # coords_box_ = coords_.repeat(1, 2) + pt_offsets_vertices_
+
+                # coords_box_ = torch.cat([coords_ + pt_offsets_vertices_[:, :3], coords_ + pt_offsets_vertices_[:, 3:]], -1).contiguous()
+                # coords_min_ = (coords_ + pt_offsets_vertices_[:, :3]).contiguous().cuda()
+                # coords_max_ = (coords_ + pt_offsets_vertices_[:, 3:]).contiguous().cuda()
+                # # breakpoint()
+                # idx, start_len = ballquery_batch_p_boxiou(coords_min_, coords_max_, batch_idxs_, batch_offsets_,
+                #                                 box_iou_thresh, mean_active)
+                # proposals_idx, proposals_offset = bfs_cluster(class_numpoint_mean, idx.cpu(),
+                #                                             start_len.cpu(), npoint_thr, class_id)
+
+            # NOTE NMC
+            box_conf_ = box_conf_ * scores[object_idxs]
+            proposals_idx, proposals_offset, proposals_box, proposals_conf = non_maximum_cluster(box_conf_, coords_, pt_offsets_, pt_offsets_vertices_, batch_offsets_, mean_active=self.grouping_cfg.mean_active_nmc, iou_thresh=self.grouping_cfg.iou_thresh)
+
+            # TODO measure mAP, mAR
+
+            if len(proposals_idx) > 0:
+                proposals_idx[:, 1] = object_idxs[proposals_idx[:, 1].long()].int()
+
+                proposals_box = []
+                proposals_conf = []
+                for idx in range(len(proposals_offset) - 1):
+                    inst_indices = proposals_idx[proposals_offset[idx]:proposals_offset[idx+1], 1].long()
+                    inst = coords_float[inst_indices]
+                    score_inst = torch.mean(semantic_scores[inst_indices, class_id])
+                    box_min = torch.min(inst, 0)[0]
+                    box_max = torch.max(inst, 0)[0]
+                    box = torch.cat([box_min, box_max])
+                    proposals_box.append(box)
+                    proposals_conf.append(score_inst)
+                proposals_box = torch.stack(proposals_box)
+                proposals_conf = torch.tensor(proposals_conf)
+
+
+                if len(proposals_offset_list) > 0:
+                    proposals_idx[:, 0] += sum([x.size(0) for x in proposals_offset_list]) - 1
+                    proposals_offset += proposals_offset_list[-1][-1]
+                    proposals_offset = proposals_offset[1:]
+
+                proposals_idx_list.append(proposals_idx)
+                proposals_offset_list.append(proposals_offset)
+
+                
+                proposals_box_list.append(proposals_box)
+                proposals_conf_list.append(proposals_conf)
+                proposals_cls_list.append(torch.ones((proposals_box.shape[0]), dtype=torch.int, device=proposals_box.device) * (class_id - 2 + 1))
+
+        
+        proposals_idx = torch.cat(proposals_idx_list, dim=0)
+        proposals_offset = torch.cat(proposals_offset_list)
+        proposals_box_list = torch.cat(proposals_box_list, dim=0) # nTotal, 6
+        proposals_conf_list = torch.cat(proposals_conf_list, dim=0) # nTotal
+        proposals_cls_list = torch.cat(proposals_cls_list, dim=0) # nTotal
+
+        # breakpoint()
+        # print('num nmc clusters', proposals_offset.shape)
+        return proposals_idx, proposals_offset, proposals_box_list, proposals_conf_list, proposals_cls_list
 
     def forward_instance(self, inst_feats, inst_map):
         feats = self.tiny_unet(inst_feats)

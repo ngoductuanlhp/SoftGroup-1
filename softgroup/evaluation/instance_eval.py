@@ -364,9 +364,13 @@ class ScanNetEval(object):
             pred_instance['void_intersection'] = np.count_nonzero(
                 np.logical_and(bool_void, pred_mask))
 
-            pred_coords = coords[pred_mask == 1]
-            pred_box_min = pred_coords.min(0)
-            pred_box_max = pred_coords.max(0)
+            if 'box' in pred.keys():
+                pred_box_min = pred['box'][:3]
+                pred_box_max = pred['box'][3:]
+            else:
+                pred_coords = coords[pred_mask == 1]
+                pred_box_min = pred_coords.min(0)
+                pred_box_max = pred_coords.max(0)
 
             pred_vol = np.prod(np.clip((pred_box_max - pred_box_min), a_min=0.0, a_max=None))
 

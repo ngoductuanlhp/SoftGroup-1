@@ -94,6 +94,7 @@ def main():
     scan_ids, coords, sem_preds, sem_labels, offset_preds, offset_vertices_preds, offset_labels = [], [], [], [], [], [], []
     nmc_clusters = []
     inst_labels, pred_insts, gt_insts = [], [], []
+    nmc_insts = []
     box_preds, box_gt = {}, {}
 
     _, world_size = get_dist_info()
@@ -141,34 +142,44 @@ def main():
                 pred_insts.append(res['pred_instances'])
                 gt_insts.append(res['gt_instances'])
 
-            if not cfg.model.semantic_only and cfg.model.eval_box:
-                box_preds[res['scan_id']] = []
-                for pred in res['pred_instances']:
-                    box_preds[res['scan_id']].append((CLASS_LABELS[int(pred['label_id']-1)], pred['box'], pred['conf']))
+                nmc_insts.append(res['nmc_instances'])
+
+            # if not cfg.model.semantic_only and cfg.model.eval_box:
+            #     box_preds[res['scan_id']] = []
+            #     for pred in res['pred_instances']:
+            #         box_preds[res['scan_id']].append((CLASS_LABELS[int(pred['label_id']-1)], pred['box'], pred['conf']))
                 
-                box_gt[res['scan_id']] = []
+            #     box_gt[res['scan_id']] = []
 
-                instance_num = int(res['instance_labels'].max()) + 1
-                for i in range(instance_num):
-                    inds = res['instance_labels'] == i
-                    gt_label_loc = np.nonzero(inds)[0][0]
-                    cls_id = int(res['semantic_preds'][gt_label_loc])
-                    if cls_id >= 2:
-                        instance = res['coords_float'][inds]
-                        box_min = instance.min(0)
-                        box_max = instance.max(0)
-                        box = np.concatenate([box_min, box_max])
-                        class_name = CLASS_LABELS[cls_id - 2]
-                        box_gt[res['scan_id']].append((class_name, box))
+            #     instance_num = int(res['instance_labels'].max()) + 1
+            #     for i in range(instance_num):
+            #         inds = res['instance_labels'] == i
+            #         gt_label_loc = np.nonzero(inds)[0][0]
+            #         cls_id = int(res['semantic_preds'][gt_label_loc])
+            #         if cls_id >= 2:
+            #             instance = res['coords_float'][inds]
+            #             box_min = instance.min(0)
+            #             box_max = instance.max(0)
+            #             box = np.concatenate([box_min, box_max])
+            #             class_name = CLASS_LABELS[cls_id - 2]
+            #             box_gt[res['scan_id']].append((class_name, box))
         
-        if not cfg.model.semantic_only:
-            logger.info('Evaluate instance segmentation')
-            scannet_eval = ScanNetEval(dataset.CLASSES)
-            scannet_eval.evaluate(pred_insts, gt_insts)
+            # if not cfg.model.semantic_only:
+            #     logger.info('Evaluate instance segmentation')
+            #     scannet_eval = ScanNetEval(dataset.CLASSES)
+            #     scannet_eval.evaluate(pred_insts, gt_insts)
 
-            if not cfg.model.semantic_only and cfg.model.eval_box:
-                logger.info('Evaluate axis-align box prediction')
-                scannet_eval.evaluate_box(pred_insts, gt_insts, coords)
+            #     if not cfg.model.semantic_only and cfg.model.eval_box:
+            #         logger.info('Evaluate axis-align box prediction')
+            #         scannet_eval.evaluate_box(pred_insts, gt_insts, coords)
+
+        if not cfg.model.semantic_only:
+            logger.info('Evaluate instance segmentation nmc')
+            scannet_eval = ScanNetEval(dataset.CLASSES)
+            scannet_eval.evaluate(nmc_insts, gt_insts)
+
+            logger.info('Evaluate axis-align box prediction nmc')
+            scannet_eval.evaluate_box(nmc_insts, gt_insts, coords)
 
         logger.info('Evaluate semantic segmentation and offset MAE')
         ignore_label = cfg.model.ignore_label
