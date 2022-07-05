@@ -114,10 +114,14 @@ def main():
             if not cfg.model.semantic_only:
                 pred_insts.append(res['pred_instances'])
                 gt_insts.append(res['gt_instances'])
+                
         if not cfg.model.semantic_only:
             logger.info('Evaluate instance segmentation')
             scannet_eval = ScanNetEval(dataset.CLASSES)
             scannet_eval.evaluate(pred_insts, gt_insts)
+            if not cfg.model.semantic_only and cfg.model.eval_box:
+                logger.info('Evaluate axis-align box prediction')
+                scannet_eval.evaluate_box(pred_insts, gt_insts, coords)
         logger.info('Evaluate semantic segmentation and offset MAE')
         ignore_label = cfg.model.ignore_label
         evaluate_semantic_miou(sem_preds, sem_labels, ignore_label, logger)
