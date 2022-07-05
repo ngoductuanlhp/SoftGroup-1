@@ -12,7 +12,7 @@ from ..ops import (ballquery_batch_p, ballquery_batch_p_boxiou, bfs_cluster, get
 from ..util import cuda_cast, force_fp32, rle_encode
 from .blocks import MLP, ResidualBlock, UBlock, PositionalEmbedding
 from .model_utils import iou_aabb, compute_dice_loss, sigmoid_focal_loss, non_maximum_cluster
-
+import numpy as np
 
 
 
@@ -22,6 +22,7 @@ class SoftGroup(nn.Module):
                  channels=32,
                  num_blocks=7,
                  semantic_only=False,
+                 eval_box=False,
                  semantic_classes=20,
                  instance_classes=18,
                  sem2ins_classes=[],
@@ -46,6 +47,7 @@ class SoftGroup(nn.Module):
         self.test_cfg = test_cfg
         self.fixed_modules = fixed_modules
         self.embedding_coord = embedding_coord
+        self.eval_box = eval_box
         
 
         if self.embedding_coord:
@@ -325,7 +327,7 @@ class SoftGroup(nn.Module):
                                                               **self.instance_voxel_cfg)
             _, cls_scores, iou_scores, mask_scores = self.forward_instance(inst_feats, inst_map)
             pred_instances = self.get_instances(scan_ids[0], proposals_idx, semantic_scores,
-                                                cls_scores, iou_scores, mask_scores)
+                                                cls_scores, iou_scores, mask_scores, coords_float)
             gt_instances = self.get_gt_instances(semantic_labels, instance_labels)
             ret.update(dict(pred_instances=pred_instances, gt_instances=gt_instances))
 
@@ -401,7 +403,7 @@ class SoftGroup(nn.Module):
         batch_size = batch_idxs.max() + 1
         semantic_scores = semantic_scores.softmax(dim=-1)
 
-        box_iou_thresh = self.grouping_cfg.box_iou_thresh
+        # box_iou_thresh = self.grouping_cfg.box_iou_thresh
         radius = self.grouping_cfg.radius
         mean_active = self.grouping_cfg.mean_active
         npoint_thr = self.grouping_cfg.npoint_thr
@@ -425,20 +427,25 @@ class SoftGroup(nn.Module):
             box_conf_ = box_conf[object_idxs]
             pt_offsets_vertices_ = pt_offsets_vertices[object_idxs]
 
-            # NOTE BALL QUERY
-            # idx, start_len = ballquery_batch_p(coords_ + pt_offsets_, batch_idxs_, batch_offsets_,
-            #                                    radius, mean_active)
-            coords_box_ = coords_.repeat(1, 2) + pt_offsets_vertices_
+                # NOTE BALL QUERY
+                # idx, start_len = ballquery_batch_p(coords_ + pt_offsets_, batch_idxs_, batch_offsets_,
+                #                                    radius, mean_active)
+                # coords_box_ = coords_.repeat(1, 2) + pt_offsets_vertices_
 
-            idx, start_len = ballquery_batch_p_boxiou(coords_box_, batch_idxs_, batch_offsets_,
-                                               box_iou_thresh, mean_active)
-            proposals_idx, proposals_offset = bfs_cluster(class_numpoint_mean, idx.cpu(),
-                                                          start_len.cpu(), npoint_thr, class_id)
+                # coords_box_ = torch.cat([coords_ + pt_offsets_vertices_[:, :3], coords_ + pt_offsets_vertices_[:, 3:]], -1).contiguous()
+                # coords_min_ = (coords_ + pt_offsets_vertices_[:, :3]).contiguous().cuda()
+                # coords_max_ = (coords_ + pt_offsets_vertices_[:, 3:]).contiguous().cuda()
+                # # breakpoint()
+                # idx, start_len = ballquery_batch_p_boxiou(coords_min_, coords_max_, batch_idxs_, batch_offsets_,
+                #                                 box_iou_thresh, mean_active)
+                # proposals_idx, proposals_offset = bfs_cluster(class_numpoint_mean, idx.cpu(),
+                #                                             start_len.cpu(), npoint_thr, class_id)
 
             # NOTE NMC
-            # box_conf_ = box_conf_ * scores[object_idxs]
-            # proposals_idx, proposals_offset = non_maximum_cluster(box_conf_, coords_, pt_offsets_, pt_offsets_vertices_, batch_offsets_)
+            box_conf_ = box_conf_ * scores[object_idxs]
+            proposals_idx, proposals_offset = non_maximum_cluster(box_conf_, coords_, pt_offsets_, pt_offsets_vertices_, batch_offsets_, iou_thresh=self.grouping_cfg.iou_thresh)
 
+            # TODO measure mAP, mAR
 
             if len(proposals_idx) > 0:
                 proposals_idx[:, 1] = object_idxs[proposals_idx[:, 1].long()].int()
@@ -459,16 +466,21 @@ class SoftGroup(nn.Module):
             # box_conf_ = box_conf[object_idxs]
             # pt_offsets_vertices_ = pt_offsets_vertices[object_idxs]
 
-            # idx, start_len = ballquery_batch_p(coords_ + pt_offsets_, batch_idxs_, batch_offsets_,
-            #                                    radius, mean_active)
+            # # idx, start_len = ballquery_batch_p(coords_ + pt_offsets_, batch_idxs_, batch_offsets_,
+            # #                                     radius, mean_active)
+
+            # coords_min_ = (coords_ + pt_offsets_vertices_[:, :3]).contiguous().cuda()
+            # coords_max_ = (coords_ + pt_offsets_vertices_[:, 3:]).contiguous().cuda()
+            # # breakpoint()
+            # idx, start_len = ballquery_batch_p_boxiou(coords_min_, coords_max_, batch_idxs_, batch_offsets_,
+            #                                 box_iou_thresh, mean_active)
+
+            # class_id = 2
             # proposals_idx, proposals_offset = bfs_cluster(class_numpoint_mean, idx.cpu(),
-            #                                               start_len.cpu(), npoint_thr, class_id)
+            #                                             start_len.cpu(), npoint_thr, class_id)
 
-            # box_conf_ = box_conf_ * scores[object_idxs]
-            # breakpoint()
-
-            # box_con_ = score_pred[object_idxs]
-            # proposals_idx, proposals_offset = non_maximum_cluster(box_conf_, coords_, pt_offsets_vertices_, batch_idxs_, batch_offsets_)
+            # # box_con_ = score_pred[object_idxs]
+            # # proposals_idx, proposals_offset = non_maximum_cluster(box_conf_, coords_, pt_offsets_vertices_, batch_idxs_, batch_offsets_)
             # if len(proposals_idx) > 0:
             #     proposals_idx[:, 1] = object_idxs[proposals_idx[:, 1].long()].int()
             #     if len(proposals_offset_list) > 0:
@@ -504,7 +516,7 @@ class SoftGroup(nn.Module):
 
     @force_fp32(apply_to=('semantic_scores', 'cls_scores', 'iou_scores', 'mask_scores'))
     def get_instances(self, scan_id, proposals_idx, semantic_scores, cls_scores, iou_scores,
-                      mask_scores):
+                      mask_scores, coords_float):
         num_instances = cls_scores.size(0)
         num_points = semantic_scores.size(0)
         cls_scores = cls_scores.softmax(1)

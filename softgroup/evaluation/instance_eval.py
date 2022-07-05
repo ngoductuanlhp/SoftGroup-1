@@ -305,6 +305,99 @@ class ScanNetEval(object):
 
         return gt2pred, pred2gt
 
+    def assign_boxes_for_scan(self, preds, gts, coords):
+        """get gt instances, only consider the valid class labels even in class
+        agnostic setting."""
+        gt_instances = get_instances(gts, self.valid_class_ids, self.valid_class_labels,
+                                     self.id2label, coords=coords)
+        # associate
+        if self.use_label:
+            gt2pred = deepcopy(gt_instances)
+            for label in gt2pred:
+                for gt in gt2pred[label]:
+                    gt['matched_pred'] = []
+
+        else:
+            gt2pred = {}
+            agnostic_instances = []
+            # concat all the instances label to agnostic label
+            for _, instances in gt_instances.items():
+                agnostic_instances += deepcopy(instances)
+            for gt in agnostic_instances:
+                gt['matched_pred'] = []
+            gt2pred[self.eval_class_labels[0]] = agnostic_instances
+
+        pred2gt = {}
+        for label in self.eval_class_labels:
+            pred2gt[label] = []
+        num_pred_instances = 0
+        # mask of void labels in the groundtruth
+        bool_void = np.logical_not(np.in1d(gts // 1000, self.valid_class_ids))
+        # go thru all prediction masks
+        for pred in preds:
+            if self.use_label:
+                label_id = pred['label_id']
+                if label_id not in self.id2label:
+                    continue
+                label_name = self.id2label[label_id]
+            else:
+                label_name = self.eval_class_labels[0]  # class agnostic label
+            conf = pred['conf']
+            pred_mask = pred['pred_mask']
+            # pred_mask can be np.array or rle dict
+            if isinstance(pred_mask, dict):
+                pred_mask = rle_decode(pred_mask)
+            assert pred_mask.shape[0] == gts.shape[0]
+
+            # convert to binary
+            pred_mask = np.not_equal(pred_mask, 0)
+            num = np.count_nonzero(pred_mask)
+            if num < self.min_region_sizes[0]:
+                continue  # skip if empty
+
+            pred_instance = {}
+            pred_instance['filename'] = '{}_{}'.format(pred['scan_id'], num_pred_instances)  # dummy
+            pred_instance['pred_id'] = num_pred_instances
+            pred_instance['label_id'] = label_id if self.use_label else None
+            pred_instance['vert_count'] = num
+            pred_instance['confidence'] = conf
+            pred_instance['void_intersection'] = np.count_nonzero(
+                np.logical_and(bool_void, pred_mask))
+
+            pred_coords = coords[pred_mask == 1]
+            pred_box_min = pred_coords.min(0)
+            pred_box_max = pred_coords.max(0)
+
+            pred_vol = np.prod(np.clip((pred_box_max - pred_box_min), a_min=0.0, a_max=None))
+
+            # matched gt instances
+            matched_gt = []
+            # go thru all gt instances with matching label
+            for (gt_num, gt_inst) in enumerate(gt2pred[label_name]):
+                gt_box_min = gt_inst['box'][:3]
+                gt_box_max = gt_inst['box'][3:]
+
+                intersection = np.prod(np.clip(np.minimum(gt_box_max, pred_box_max) - np.maximum(gt_box_min, pred_box_min), a_min=0.0, a_max=None))
+                if intersection > 0:
+                    gt_copy = gt_inst.copy()
+                    pred_copy = pred_instance.copy()
+                    gt_copy['intersection'] = intersection
+                    pred_copy['intersection'] = intersection
+
+                    gt_vol = np.prod(np.clip((gt_box_max - gt_box_min), a_min=0.0, a_max=None))
+                    iou = (
+                        float(intersection) /
+                        (gt_vol + pred_vol - intersection))
+                    gt_copy['iou'] = iou
+                    pred_copy['iou'] = iou
+                    matched_gt.append(gt_copy)
+                    gt2pred[label_name][gt_num]['matched_pred'].append(pred_copy)
+            pred_instance['matched_gt'] = matched_gt
+            num_pred_instances += 1
+            pred2gt[label_name].append(pred_instance)
+
+        return gt2pred, pred2gt
+
     def print_results(self, avgs):
         sep = ''
         col1 = ':'
@@ -383,6 +476,36 @@ class ScanNetEval(object):
         """
         pool = mp.Pool()
         results = pool.starmap(self.assign_instances_for_scan, zip(pred_list, gt_list))
+        pool.close()
+        pool.join()
+
+        matches = {}
+        for i, (gt2pred, pred2gt) in enumerate(results):
+            matches_key = f'gt_{i}'
+            matches[matches_key] = {}
+            matches[matches_key]['gt'] = gt2pred
+            matches[matches_key]['pred'] = pred2gt
+        ap_scores, rc_scores = self.evaluate_matches(matches)
+        avgs = self.compute_averages(ap_scores, rc_scores)
+
+        # print
+        self.print_results(avgs)
+        return avgs
+
+    def evaluate_box(self, pred_list, gt_list, coords_list):
+        """
+        Args:
+            pred_list:
+                for each scan:
+                    for each instance
+                        instance = dict(scan_id, label_id, mask, conf)
+            gt_list:
+                for each scan:
+                    for each point:
+                        gt_id = class_id * 1000 + instance_id
+        """
+        pool = mp.Pool()
+        results = pool.starmap(self.assign_boxes_for_scan, zip(pred_list, gt_list, coords_list))
         pool.close()
         pool.join()
 

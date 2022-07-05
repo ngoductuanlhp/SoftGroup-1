@@ -5,8 +5,10 @@ model:
   instance_classes: 18
   sem2ins_classes: []
   semantic_only: False
+  eval_box: True
   ignore_label: -100
   grouping_cfg:
+    iou_thresh: 0.3
     score_thr: 0.2
     radius: 0.04
     mean_active: 300
@@ -31,7 +33,7 @@ model:
     min_npoint: 100
   fixed_modules: ['input_conv', 'unet', 'output_layer', 'semantic_linear', 'offset_linear', 'offset_vertices_linear', 'box_conf_linear']
   # fixed_modules: []
-  embedding_coord: True
+  embedding_coord: False
   
 data:
   train:
@@ -89,9 +91,9 @@ save_cfg:
   offset_vertices: False
   nmc_clusters: True
 
-fp16: False
-epochs: 64
-step_epoch: 32
+fp16: True
+epochs: 40
+step_epoch: 20
 save_freq: 4
-pretrain: 'work_dirs/softgroup_scannet_bbox_context_head/iou_conf_nmc/best.pth'
+pretrain: 'pretrains/best_pretrain_bbox_context_iou_conf_no_coord_embed.pth'
 work_dir: ''

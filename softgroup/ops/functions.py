@@ -238,7 +238,7 @@ ballquery_batch_p = BallQueryBatchP.apply
 class BallQueryBatchP_BoxIou(Function):
 
     @staticmethod
-    def forward(ctx, coords, batch_idxs, batch_offsets, thresh_iou, meanActive):
+    def forward(ctx, coords_min, coords_max, batch_idxs, batch_offsets, thresh_iou, meanActive):
         '''
         :param ctx:
         :param coords: (n, 3) float
@@ -250,9 +250,10 @@ class BallQueryBatchP_BoxIou(Function):
         :return: start_len (n, 2), int
         '''
 
-        n = coords.size(0)
+        n = coords_min.size(0)
 
-        assert coords.is_contiguous() and coords.is_cuda
+        assert coords_min.is_contiguous() and coords_min.is_cuda
+        assert coords_max.is_contiguous() and coords_max.is_cuda
         assert batch_idxs.is_contiguous() and batch_idxs.is_cuda
         assert batch_offsets.is_contiguous() and batch_offsets.is_cuda
 
@@ -262,7 +263,7 @@ class BallQueryBatchP_BoxIou(Function):
 
 
             # print('debug', coords.shape, thresh_iou)
-            nActive = ops.ballquery_batch_p_boxiou(coords, batch_idxs, batch_offsets, idx, start_len, n,
+            nActive = ops.ballquery_batch_p_boxiou(coords_min, coords_max, batch_idxs, batch_offsets, idx, start_len, n,
                                             meanActive, thresh_iou)
 
             

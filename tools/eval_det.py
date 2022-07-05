@@ -6,6 +6,13 @@ from multiprocessing import Pool
 import numpy as np
 import torch
 
+CLASS_LABELS = [
+    'cabinet', 'bed', 'chair', 'sofa', 'table', 'door', 'window', 'bookshelf', 'picture',
+    'counter', 'desk', 'curtain', 'refrigerator', 'shower curtain', 'toilet', 'sink', 'bathtub',
+    'otherfurniture'
+]
+VALID_CLASS_IDS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 24, 28, 33, 34, 36, 39]
+
 
 def voc_ap(rec, prec, use_07_metric=False):
     """ ap = voc_ap(rec, prec, [use_07_metric])
@@ -265,12 +272,6 @@ def eval_sphere(pred_all, gt_all, ovthresh=0.25, use_07_metric=False, get_iou_fu
 
 
 if __name__ == '__main__':
-    CLASS_LABELS = [
-        'cabinet', 'bed', 'chair', 'sofa', 'table', 'door', 'window', 'bookshelf', 'picture',
-        'counter', 'desk', 'curtain', 'refrigerator', 'shower curtain', 'toilet', 'sink', 'bathtub',
-        'otherfurniture'
-    ]
-    VALID_CLASS_IDS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 24, 28, 33, 34, 36, 39]
     data_path = './dataset/scannetv2/val/'
     prediction_path = './exp/scannetv2/softgroup/softgroup_default_scannet/result/val'
     iou_threshold = 0.25  # adjust threshold here

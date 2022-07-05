@@ -12,4 +12,4 @@ CUDA_VISIBLE_DEVICES=0 python3 tools/test.py configs/softgroup_scannet.yaml work
 CUDA_VISIBLE_DEVICES=2 python3 tools/test.py configs/softgroup_scannet_bbox_context_head.yaml pretrains/best_pretrain_bbox_context.pth
 
 
-CUDA_VISIBLE_DEVICES=6 python3 tools/test.py configs/softgroup_scannet_bbox_context_head.yaml work_dirs/softgroup_scannet_bbox_context/best.pth --out results/bbox_context --save_lite
+CUDA_VISIBLE_DEVICES=7 python3 tools/test.py configs/softgroup_scannet_bbox_context_head.yaml work_dirs/softgroup_scannet_bbox_context_head/iou_conf_nmc_no_coord_embed/best.pth --save_lite

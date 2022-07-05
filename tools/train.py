@@ -191,8 +191,8 @@ def main():
     logger.info(f'Trainable params: {trainable_params}')
 
     if args.dist:
-        model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()], find_unused_parameters=True)
-        # model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()])
+        model = DistributedDataParallel(model, device_ids=[torch.cuda.current_device()], find_unused_parameters=(trainable_params < total_params))
+
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.fp16)
 
     # data

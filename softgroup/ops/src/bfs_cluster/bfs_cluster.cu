@@ -66,7 +66,7 @@ __global__ void ballquery_batch_p_cuda_(int n, int meanActive, float radius,
 }
 
 __global__ void ballquery_batch_p_boxiou_cuda_(int n, int meanActive, float thresh_iou,
-                                        const float *xyz, const int *batch_idxs,
+                                        const float *xyz_min, const float *xyz_max, const int *batch_idxs,
                                         const int *batch_offsets, int *idx,
                                         int *start_len, int *cumsum) {
   int pt_idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -78,13 +78,13 @@ __global__ void ballquery_batch_p_boxiou_cuda_(int n, int meanActive, float thre
 
 
 
-  float o_x1 = xyz[pt_idx * 6 + 0];
-  float o_y1 = xyz[pt_idx * 6 + 1];
-  float o_z1 = xyz[pt_idx * 6 + 2];
+  float o_x1 = xyz_min[pt_idx * 3 + 0];
+  float o_y1 = xyz_min[pt_idx * 3 + 1];
+  float o_z1 = xyz_min[pt_idx * 3 + 2];
 
-  float o_x2 = xyz[pt_idx * 6 + 3];
-  float o_y2 = xyz[pt_idx * 6 + 4];
-  float o_z2 = xyz[pt_idx * 6 + 5];
+  float o_x2 = xyz_max[pt_idx * 3 + 0];
+  float o_y2 = xyz_max[pt_idx * 3 + 1];
+  float o_z2 = xyz_max[pt_idx * 3 + 2];
 
   // float o_x2 = xyz[pt_idx * 3 + 0];
   // float o_y2 = xyz[pt_idx * 3 + 1];
@@ -98,13 +98,13 @@ __global__ void ballquery_batch_p_boxiou_cuda_(int n, int meanActive, float thre
 
   int cnt = 0;
   for (int k = start; k < end; k++) {
-    float x1 = xyz[k * 6 + 0];
-    float y1 = xyz[k * 6 + 1];
-    float z1 = xyz[k * 6 + 2];
+    float x1 = xyz_min[k * 3 + 0];
+    float y1 = xyz_min[k * 3 + 1];
+    float z1 = xyz_min[k * 3 + 2];
 
-    float x2 = xyz[k * 6 + 3];
-    float y2 = xyz[k * 6 + 4];
-    float z2 = xyz[k * 6 + 5];
+    float x2 = xyz_max[k * 3 + 0];
+    float y2 = xyz_max[k * 3 + 1];
+    float z2 = xyz_max[k * 3 + 2];
 
     // float x2 = xyz[k * 3 + 0];
     // float y2 = xyz[k * 3 + 1];
@@ -112,13 +112,13 @@ __global__ void ballquery_batch_p_boxiou_cuda_(int n, int meanActive, float thre
 
     float cur_area = (x2 - x1) * (y2 - y1) * (z2 - z1);
 
-    float x_upper = min(x2, o_x2);
-    float y_upper = min(y2, o_y2);
-    float z_upper = min(z2, o_z2);
+    float x_upper = (x2 < o_x2) ? x2 : o_x2;
+    float y_upper = (y2 < o_y2) ? y2 : o_y2;
+    float z_upper = (z2 < o_z2) ? z2 : o_z2;
 
-    float x_lower = max(x1, o_x1);
-    float y_lower = max(y1, o_y1);
-    float z_lower = max(z1, o_z1);
+    float x_lower = (x1 > o_x1) ? x1 : o_x1;
+    float y_lower = (y1 > o_y1) ? y1 : o_y1;
+    float z_lower = (z1 > o_z1) ? z1 : o_z1;
 
     float range_x = (x_upper > x_lower) ? (x_upper - x_lower) : 0.0;
     float range_y = (y_upper > y_lower) ? (y_upper - y_lower) : 0.0;
@@ -195,7 +195,7 @@ int ballquery_batch_p_cuda(int n, int meanActive, float radius,
 }
 
 int ballquery_batch_p_boxiou_cuda(int n, int meanActive, float radius,
-                           const float *xyz, const int *batch_idxs,
+                           const float *xyz_min, const float *xyz_max, const int *batch_idxs,
                            const int *batch_offsets, int *idx, int *start_len,
                            cudaStream_t stream) {
   // param xyz: (n, 3)
@@ -216,7 +216,7 @@ int ballquery_batch_p_boxiou_cuda(int n, int meanActive, float radius,
   cudaMemcpy(p_cumsum, &cumsum, sizeof(int), cudaMemcpyHostToDevice);
 
   ballquery_batch_p_boxiou_cuda_<<<blocks, threads, 0, stream>>>(
-      n, meanActive, radius, xyz, batch_idxs, batch_offsets, idx, start_len,
+      n, meanActive, radius, xyz_min, xyz_max, batch_idxs, batch_offsets, idx, start_len,
       p_cumsum);
 
   err = cudaGetLastError();
