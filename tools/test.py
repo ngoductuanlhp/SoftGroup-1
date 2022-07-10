@@ -4,6 +4,7 @@ import os
 import os.path as osp
 from functools import partial
 
+import math
 import numpy as np
 import torch
 import yaml
@@ -17,6 +18,8 @@ from softgroup.util import (collect_results_gpu, get_dist_info, get_root_logger,
 from torch.nn.parallel import DistributedDataParallel
 from tqdm import tqdm
 import time
+
+from eval_det import CLASS_LABELS, VALID_CLASS_IDS, eval_sphere
 
 def get_args():
     parser = argparse.ArgumentParser('SoftGroup')
@@ -88,29 +91,27 @@ def main():
     logger.info(f'Load state dict from {args.checkpoint}')
     load_checkpoint(args.checkpoint, logger, model)
 
-    dataset = build_dataset(cfg.data.test, logger)
+    dataset = build_dataset(cfg.data.test, logger, lite=args.save_lite)
     dataloader = build_dataloader(dataset, training=False, dist=args.dist, **cfg.dataloader.test)
     results = []
     scan_ids, coords, sem_preds, sem_labels, offset_preds, offset_labels = [], [], [], [], [], []
     debug_accu = []
 
     inst_labels, pred_insts, gt_insts = [], [], []
+    box_preds, box_gt = {}, {}
     _, world_size = get_dist_info()
-    progress_bar = tqdm(total=len(dataloader) * world_size, disable=not is_main_process())
+
     with torch.no_grad():
         model.eval()
         for i, batch in enumerate(dataloader):
-            if args.save_lite and i % 10 != 0:
-                continue
-
-            # print(i)
             # t = time.time()
             with torch.cuda.amp.autocast(enabled=cfg.fp16):
                 result = model(batch)
             # print('f time', time.time() - t)
             results.append(result)
-            progress_bar.update(world_size)
-        progress_bar.close()
+
+            if is_main_process() and i % 10 == 0:
+                logger.info(f'Infer scene {i+1}/{len(dataloader)}')
         results = collect_results_gpu(results, len(dataset))
     if is_main_process():
         point_eval = PointWiseEval()
@@ -129,16 +130,65 @@ def main():
             if not cfg.model.semantic_only:
                 pred_insts.append(res['pred_instances'])
                 gt_insts.append(res['gt_instances'])
+
+                    # box_preds[res['scan_id']] = []
+                    # for pred in res['pred_instances']:
+                    #     box = pred['box']
+
+                    #     theta = -0.35 * math.pi
+                    #     m = np.array( [[math.cos(theta), math.sin(theta), 0],
+                    #                     [-math.sin(theta), math.cos(theta), 0], [0, 0, 1]])
+
+                    #     box = np.matmul(box.reshape(2, 3), m).reshape(-1)
+
+                    #     box_preds[res['scan_id']].append((CLASS_LABELS[int(pred['label_id'])-1], box, pred['conf']))
+                    
+                    # box_gt[res['scan_id']] = []
+
+                    # instance_num = int(res['instance_labels'].max()) + 1
+                    # for i in range(instance_num):
+                    #     inds = res['instance_labels'] == i
+                    #     gt_label_loc = np.nonzero(inds)[0][0]
+                    #     cls_id = int(res['semantic_preds'][gt_label_loc])
+                    #     if cls_id >= 2:
+                    #         instance = res['coords_float'][inds]
+                    #         box_min = instance.min(0)
+                    #         box_max = instance.max(0)
+                    #         box = np.concatenate([box_min, box_max]) # 6
+
+                    #         theta = -0.35 * math.pi
+                    #         m = np.array( [[math.cos(theta), math.sin(theta), 0],
+                    #                         [-math.sin(theta), math.cos(theta), 0], [0, 0, 1]])
+
+                    #         box = np.matmul(box.reshape(2, 3), m).reshape(-1)
+
+                    #         class_name = CLASS_LABELS[cls_id - 2]
+                    #         box_gt[res['scan_id']].append((class_name, box))
+                
         if not cfg.model.semantic_only:
             logger.info('Evaluate instance segmentation')
             scannet_eval = ScanNetEval(dataset.CLASSES)
             scannet_eval.evaluate(pred_insts, gt_insts)
+
+            logger.info('Evaluate axis-align box prediction')
+            scannet_eval.evaluate_box(pred_insts, gt_insts, coords)
         logger.info('Evaluate semantic segmentation and offset MAE')
         ignore_label = cfg.model.ignore_label
         miou, acc, mae = point_eval.get_eval(logger)
         # evaluate_semantic_miou(sem_preds, sem_labels, ignore_label, logger)
         # evaluate_semantic_acc(sem_preds, sem_labels, ignore_label, logger)
         # evaluate_offset_mae(offset_preds, offset_labels, inst_labels, ignore_label, logger)
+
+            # print('Evaluating...')
+            # eval_res = eval_sphere(box_preds, box_gt, ovthresh=0.25)
+            # aps = list(eval_res[-1].values())
+            # mAP = np.mean(aps)
+            # print('mAP 0.25:', mAP)
+
+            # eval_res = eval_sphere(box_preds, box_gt, ovthresh=0.5)
+            # aps = list(eval_res[-1].values())
+            # mAP = np.mean(aps)
+            # print('mAP 0.5:', mAP)
 
         # save output
         if not args.out:

@@ -57,10 +57,10 @@ data:
 dataloader:
   train:
     batch_size: 8
-    num_workers: 8
+    num_workers: 16
   test:
     batch_size: 1
-    num_workers: 1
+    num_workers: 8
 
 optimizer:
   type: 'Adam'
@@ -71,7 +71,7 @@ save_cfg:
   offset: True
   instance: True
 
-fp16: True
+fp16: False
 epochs: 40
 step_epoch: 20
 save_freq: 4

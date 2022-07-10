@@ -316,11 +316,11 @@ class SoftGroup(nn.Module):
                                                               output_feats, coords_float,
                                                               **self.instance_voxel_cfg)
             instance_batch_idxs, cls_scores, iou_scores, mask_scores = self.forward_instance(inst_feats, inst_map)
-            # pred_instances = self.get_instances(scan_ids[0], proposals_idx, semantic_scores,
-            #                                     cls_scores, iou_scores, mask_scores)
+            pred_instances = self.get_instances(scan_ids[0], proposals_idx, semantic_scores,
+                                                cls_scores, iou_scores, mask_scores, coords_float)
 
-            pred_instances = self.get_instances_new(scan_ids[0], instance_batch_idxs, proposals_idx, semantic_scores,
-                                                cls_scores, iou_scores, mask_scores)
+            # pred_instances = self.get_instances_new(scan_ids[0], instance_batch_idxs, proposals_idx, semantic_scores,
+            #                                     cls_scores, iou_scores, mask_scores)
             gt_instances = self.get_gt_instances(semantic_labels, instance_labels)
             ret.update(dict(pred_instances=pred_instances, gt_instances=gt_instances))
 
@@ -445,7 +445,7 @@ class SoftGroup(nn.Module):
 
     @force_fp32(apply_to=('semantic_scores', 'cls_scores', 'iou_scores', 'mask_scores'))
     def get_instances(self, scan_id, proposals_idx, semantic_scores, cls_scores, iou_scores,
-                      mask_scores):
+                      mask_scores, coords_float):
         num_instances = cls_scores.size(0)
         num_points = semantic_scores.size(0)
         cls_scores = cls_scores.softmax(1)
@@ -492,6 +492,12 @@ class SoftGroup(nn.Module):
             pred['scan_id'] = scan_id
             pred['label_id'] = cls_pred[i]
             pred['conf'] = score_pred[i]
+
+                # inst = coords_float[mask_pred[i]==1]
+                # box_min = torch.min(inst, 0)[0]
+                # box_max = torch.max(inst, 0)[0]
+                # box = torch.cat([box_min, box_max]).cpu().numpy()
+                # pred['box'] = box
             # rle encode mask to save memory
             pred['pred_mask'] = rle_encode(mask_pred[i])
             instances.append(pred)
