@@ -5,6 +5,8 @@ from operator import itemgetter
 import numpy as np
 import torch
 import math
+
+import open3d as o3d
 # yapf:disable
 COLOR_DETECTRON2 = np.array(
     [
@@ -165,7 +167,7 @@ def get_coords_color(opt):
                         [-math.sin(theta), math.cos(theta), 0], [0, 0, 1]])
 
     xyz = np.matmul(xyz, m)
-
+    boxes = []
     if (opt.task == 'semantic_gt'):
         assert opt.data_split != 'test'
         label = label.astype(np.int)
@@ -182,6 +184,27 @@ def get_coords_color(opt):
         label_pred = np.load(semantic_file).astype(np.int)  # 0~19
         label_pred_rgb = np.array(itemgetter(*SEMANTIC_NAMES[label_pred])(CLASS_COLOR))
         rgb = label_pred_rgb
+
+        offset_file = os.path.join(opt.prediction_path, 'offset_vertices_pred',
+                                   opt.room_name + '.npy')
+        assert os.path.isfile(offset_file), 'No offset result - {}.'.format(offset_file)
+        offset_coords = np.load(offset_file)
+
+        # print(offset_coords.shape)
+
+        offset_coords_min = offset_coords[:, :3] + xyz
+        offset_coords_max = offset_coords[:, 3:] + xyz
+
+        sem_ids = np.unique(label_pred)
+
+        for sem_id in sem_ids:
+            color = np.array(CLASS_COLOR[SEMANTIC_NAMES[sem_id]])
+            if sem_id > 1:
+                indices = np.nonzero(label_pred == sem_id)[0][::200]
+                for ind in indices:
+                    box = o3d.geometry.AxisAlignedBoundingBox(min_bound=offset_coords_min[ind], max_bound=offset_coords_max[ind])
+                    box.color = color/255.
+                    boxes.append(box)  
 
     elif (opt.task == 'offset_semantic_pred'):
         assert opt.data_split != 'train'
@@ -200,6 +223,168 @@ def get_coords_color(opt):
         # xyz = offset_coords[:, :3] + offset_coords[:, 3:]
         xyz[label_pred > 1] += offset_coords[label_pred > 1]
         # xyz += offset_coords
+
+    elif (opt.task == 'offset_vertices_pred'):
+        offset_file = os.path.join(opt.prediction_path, 'offset_vertices_pred',
+                                   opt.room_name + '.npy')
+        assert os.path.isfile(offset_file), 'No offset result - {}.'.format(offset_file)
+        offset_coords = np.load(offset_file)
+
+        # print(offset_coords.shape)
+
+        offset_coords_min = offset_coords[:, :3] + xyz
+        offset_coords_max = offset_coords[:, 3:] + xyz
+
+        assert opt.data_split != 'test'
+        inst_label = inst_label.astype(np.int)
+        print('Instance number: {}'.format(inst_label.max() + 1))
+        inst_label_rgb = np.zeros(rgb.shape)
+        ins_num = inst_label.max() + 1
+        ins_pointnum = np.zeros(ins_num)
+        for _ins_id in range(ins_num):
+            ins_pointnum[_ins_id] = (inst_label == _ins_id).sum()
+        sort_idx = np.argsort(ins_pointnum)[::-1]
+        for _sort_id in range(ins_num):
+            color = COLOR_DETECTRON2[_sort_id % len(COLOR_DETECTRON2)]
+            inst_label_rgb[inst_label == sort_idx[_sort_id]] = color
+
+
+            # min_coord = np.mean(offset_coords_min[inst_label == sort_idx[_sort_id]], 0)
+            # max_coord = np.mean(offset_coords_max[inst_label == sort_idx[_sort_id]], 0)
+            # box = o3d.geometry.AxisAlignedBoundingBox(min_bound=min_coord, max_bound=max_coord)
+            # box.color = color/255.
+            # boxes.append(box)    
+            indices = np.nonzero(inst_label == sort_idx[_sort_id])[0][::500]
+            for ind in indices:
+                box = o3d.geometry.AxisAlignedBoundingBox(min_bound=offset_coords_min[ind], max_bound=offset_coords_max[ind])
+                box.color = color/255.
+                boxes.append(box)        
+
+        print('total boxes:', len(boxes))
+        rgb = inst_label_rgb
+
+        
+        
+
+        # indices = np.nonzero(label_pred>1)[0][::100]
+        # # print(indices)
+        # for ind in indices:
+        #     box = o3d.geometry.AxisAlignedBoundingBox(min_bound=offset_coords_min[ind], max_bound=offset_coords_max[ind])
+        #     boxes.append(box)
+        # xyz = offset_coords[:, :3] + offset_coords[:, 3:]
+        # xyz[label_pred > 1] += offset_coords[label_pred > 1]
+
+    elif (opt.task == 'nmc_clusters'):
+        offset_file = os.path.join(opt.prediction_path, 'offset_vertices_pred',
+                                   opt.room_name + '.npy')
+        assert os.path.isfile(offset_file), 'No offset result - {}.'.format(offset_file)
+        offset_coords = np.load(offset_file)
+
+        # print(offset_coords.shape)
+
+        offset_coords_min = offset_coords[:, :3] + xyz
+        offset_coords_max = offset_coords[:, 3:] + xyz
+
+        nmc_clusters_file = os.path.join(opt.prediction_path, 'nmc_clusters',
+                                   opt.room_name + '.npy')
+        assert os.path.isfile(nmc_clusters_file), 'nmc_clusters - {}.'.format(nmc_clusters_file)
+        nmc_clusters = np.load(nmc_clusters_file).reshape(-1)
+
+        # print(offset_coords.shape)
+
+        # offset_coords_min = offset_coords[:, :3] + xyz
+        # offset_coords_max = offset_coords[:, 3:] + xyz
+
+        # assert opt.data_split != 'test'
+        # inst_label = inst_label.astype(np.int)
+        # print('Instance number: {}'.format(inst_label.max() + 1))
+        # inst_label_rgb = np.zeros(rgb.shape)
+        # ins_num = inst_label.max() + 1
+        # ins_pointnum = np.zeros(ins_num)
+        # for _ins_id in range(ins_num):
+        #     ins_pointnum[_ins_id] = (inst_label == _ins_id).sum()
+        # sort_idx = np.argsort(ins_pointnum)[::-1]
+        inst_label_rgb = np.zeros(rgb.shape)
+        cluster_ids = np.unique(nmc_clusters)
+
+        # chair_indices = np.nonzero(label == 6)[0]
+        print('total inst', len(cluster_ids)-1, len(COLOR_DETECTRON2))
+        for id in cluster_ids:
+            if id == -100:
+                continue
+            color = COLOR_DETECTRON2[id % len(COLOR_DETECTRON2)]
+            inst_label_rgb[nmc_clusters == id] = color
+
+            indices = np.nonzero(nmc_clusters == id)[0][::1000]
+            for ind in indices:
+                # if ind not in chair_indices:
+                #     continue
+                box = o3d.geometry.AxisAlignedBoundingBox(min_bound=offset_coords_min[ind], max_bound=offset_coords_max[ind])
+                box.color = color/255.
+                boxes.append(box)    
+            #   
+            # min_coord = np.mean(offset_coords_min[nmc_clusters == id], 0)
+            # max_coord = np.mean(offset_coords_max[nmc_clusters == id], 0)
+            # box = o3d.geometry.AxisAlignedBoundingBox(min_bound=min_coord, max_bound=max_coord)
+            # box.color = color/255.
+            # boxes.append(box)    
+        rgb = inst_label_rgb
+
+    elif (opt.task == 'nmc_clusters_ballquery'):
+        offset_file = os.path.join(opt.prediction_path, 'offset_vertices_pred',
+                                   opt.room_name + '.npy')
+        assert os.path.isfile(offset_file), 'No offset result - {}.'.format(offset_file)
+        offset_coords = np.load(offset_file)
+
+        # print(offset_coords.shape)
+
+        offset_coords_min = offset_coords[:, :3] + xyz
+        offset_coords_max = offset_coords[:, 3:] + xyz
+
+        nmc_clusters_file = os.path.join(opt.prediction_path, 'nmc_clusters_default',
+                                   opt.room_name + '.npy')
+        assert os.path.isfile(nmc_clusters_file), 'nmc_clusters - {}.'.format(nmc_clusters_file)
+        nmc_clusters = np.load(nmc_clusters_file).reshape(-1)
+
+        # print(offset_coords.shape)
+
+        # offset_coords_min = offset_coords[:, :3] + xyz
+        # offset_coords_max = offset_coords[:, 3:] + xyz
+
+        # assert opt.data_split != 'test'
+        # inst_label = inst_label.astype(np.int)
+        # print('Instance number: {}'.format(inst_label.max() + 1))
+        # inst_label_rgb = np.zeros(rgb.shape)
+        # ins_num = inst_label.max() + 1
+        # ins_pointnum = np.zeros(ins_num)
+        # for _ins_id in range(ins_num):
+        #     ins_pointnum[_ins_id] = (inst_label == _ins_id).sum()
+        # sort_idx = np.argsort(ins_pointnum)[::-1]
+        inst_label_rgb = np.zeros(rgb.shape)
+        cluster_ids = np.unique(nmc_clusters)
+
+        # chair_indices = np.nonzero(label == 6)[0]
+        print('total inst', len(cluster_ids)-1, len(COLOR_DETECTRON2))
+        for id in cluster_ids:
+            if id == -100:
+                continue
+            color = COLOR_DETECTRON2[id % len(COLOR_DETECTRON2)]
+            inst_label_rgb[nmc_clusters == id] = color
+
+            indices = np.nonzero(nmc_clusters == id)[0][::1000]
+            for ind in indices:
+                # if ind not in chair_indices:
+                #     continue
+                box = o3d.geometry.AxisAlignedBoundingBox(min_bound=offset_coords_min[ind], max_bound=offset_coords_max[ind])
+                box.color = color/255.
+                boxes.append(box)    
+            #   
+            # min_coord = np.mean(offset_coords_min[nmc_clusters == id], 0)
+            # max_coord = np.mean(offset_coords_max[nmc_clusters == id], 0)
+            # box = o3d.geometry.AxisAlignedBoundingBox(min_bound=min_coord, max_bound=max_coord)
+            # box.color = color/255.
+            # boxes.append(box)    
+        rgb = inst_label_rgb
 
     # same color order according to instance pointnum
     elif (opt.task == 'instance_gt'):
@@ -262,7 +447,7 @@ def get_coords_color(opt):
         xyz = xyz[sem_valid]
         rgb = rgb[sem_valid]
 
-    return xyz, rgb
+    return xyz, rgb, boxes
 
 
 def write_ply(verts, colors, indices, output_file):
@@ -304,7 +489,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--prediction_path',
         help='path to the prediction results',
-        default='./exp/scannetv2/softgroup/softgroup_default_scannet/result')
+        default='./results/softgroup')
     parser.add_argument(
         '--data_split', help='train/val/test for scannet or Area_ID for s3dis', default='val')
     parser.add_argument('--room_name', help='room_name', default='scene0011_00')
@@ -315,7 +500,7 @@ if __name__ == '__main__':
     parser.add_argument('--out', default='', help='output point cloud file in FILE.ply format')
     opt = parser.parse_args()
 
-    xyz, rgb = get_coords_color(opt)
+    xyz, rgb, boxes = get_coords_color(opt)
     points = xyz[:, :3]
     colors = rgb / 255
 
@@ -323,13 +508,22 @@ if __name__ == '__main__':
         assert '.ply' in opt.out, 'output cloud file should be in FILE.ply format'
         write_ply(points, colors, None, opt.out)
     else:
-        import open3d as o3d
+        
         pc = o3d.geometry.PointCloud()
         pc.points = o3d.utility.Vector3dVector(points)
         pc.colors = o3d.utility.Vector3dVector(colors)
 
+        
+
         vis = o3d.visualization.Visualizer()
         vis.create_window()
+
+        
+        if len(boxes) > 0:
+            for box in boxes:
+                # box.color = (1,0,0)
+                vis.add_geometry(box)
+
         vis.add_geometry(pc)
         vis.get_render_option().point_size = 6
         vis.run()
