@@ -328,8 +328,8 @@ if __name__ == '__main__':
         help='path to the prediction results',
         default='./exp/scannetv2/softgroup/softgroup_default_scannet/result')
     parser.add_argument(
-        '--data_split', help='train/val/test for scannet or Area_ID for s3dis', default='val')
-    parser.add_argument('--room_name', help='room_name', default='scene0011_00')
+        '--data_split', help='train/val/test for scannet or Area_ID for s3dis', default='train')
+    parser.add_argument('--room_name', help='room_name', default='scene0000_00')
     parser.add_argument(
         '--task',
         help='input/semantic_gt/semantic_pred/offset_semantic_pred/instance_gt/instance_pred',

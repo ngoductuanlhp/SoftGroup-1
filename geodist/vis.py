@@ -14,14 +14,14 @@ color_rgb = np.stack(color_rgb, axis=-1).reshape(-1, 3)
 # print(color_rgb.shape)
 COLOR_DETECTRON2 = color_rgb
 # scene_name = 'scene0700_01'
-idx = range(0, 256, 1)
+idx = range(0, 64, 1)
 
 # for s in geo_dict.keys():
 
-with open('graph_test.pkl', 'rb') as handle:
+with open('../pretrains/graph_test.pkl', 'rb') as handle:
     saved_dict = pickle.load(handle)
 
-with open('path_test.pkl', 'rb') as handle:
+with open('../pretrains/path_test.pkl', 'rb') as handle:
     geo_dist_pkl = pickle.load(handle)
 
 # 

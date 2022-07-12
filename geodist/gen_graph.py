@@ -54,19 +54,21 @@ def gen_graph(input_file, geo_knn):
 
 
     radius = 0.02
-    k = 16
+    k = 4
 
-    
+    # train_folder = '/home/ubuntu/fewshot3d_ws/SoftGroup/dataset/scannetv2/train'
+    # save_folder = '/home/ubuntu/fewshot3d_ws/SoftGroup/dataset/scannetv2/graph'
+    # os.makedirs(save_folder, exist_ok=True)
 
     # input_files = glob.glob(train_folder + '/scene*')
-    # # input_file = '/home/tuan/workspace/SoftGroup/dataset/scannetv2/val/scene0046_01_inst_nostuff.pth'
+    input_file = '/home/tuan/workspace/SoftGroup/dataset/scannetv2/val/scene0046_01_inst_nostuff.pth'
     # for input_file in tqdm(input_files):
     xyz, rgb, _, _ = torch.load(input_file)
-    
+    scene_name = os.path.basename(input_file)[:12]
 
     edges = []
     n_points = xyz.shape[0]
-    n_pivots = 256
+    n_pivots = 64
 
     pivots_inds = farthest_point_sample(xyz, n_pivots)
     pivots = xyz[pivots_inds]
@@ -120,7 +122,7 @@ def gen_graph(input_file, geo_knn):
         # print(np.mean(color_diff))
         color_mask = (color_diff <= 0.05)
 
-        radius_mask = ((D_geo[src_idx] <= 0.02) & (color_diff <= 0.2)) | ((color_diff <= 0.1) & (D_geo[src_idx] <= 0.04))
+        radius_mask = ((D_geo[src_idx] <= 0.05) & (color_diff <= 0.4)) | ((color_diff <= 0.2) & (D_geo[src_idx] <= 0.06))
 
         # if np.count_nonzero(D_geo[src_idx]==-1) or np.count_nonzero(I_geo[src_idx]==-1):
         #     print('bug')
@@ -139,6 +141,7 @@ def gen_graph(input_file, geo_knn):
     edges = np.concatenate(edges, axis=0)
     edges = np.concatenate([edges, pivots_edges], axis=0)
     
+    print('total edges', edges.shape)
     saved_dict = {
         'edges': edges,
         'xyz': xyz,
@@ -146,23 +149,14 @@ def gen_graph(input_file, geo_knn):
         'pivots_inds': pivots_inds,
         'pivots': pivots
     }
-    
+    # saved_path = os.path.join(save_folder, scene_name + '.pkl')
+    saved_path = '/home/tuan/workspace/SoftGroup/pretrains/graph_test.pkl'
     with open(saved_path, 'wb') as handle:
         pickle.dump(saved_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     geo_knn.reset()
 
-    print('Graph save to', saved_path)
+        # print('Graph save to', saved_path)
 
-res = faiss.StandardGpuResources()  # use a single GPU
-# index_flat = faiss.IndexFlatL2(3)  # build a flat (CPU) index
-geo_knn = faiss.index_cpu_to_gpu(res, 0, faiss.IndexFlatL2(3))
-
-
-input_files = glob.glob(train_folder + '/scene*')
-for input_file in input_files:
-    gen_graph(input_file, geo_knn)
-# p = mp.Pool(processes=16)
-# p.map(gen_graph, input_files)
-# p.close()
-# p.join()
+if __name__ == '__main__':
+    main()

@@ -190,7 +190,4 @@ def knn():
     #     for p in range(pivots_num):
     #         pivots_dists[p, I_geo[pivots[p]]] += D_geo[pivots[p]]
 
-
-a = torch.arange(10)
-b = torch.unique(a)
 knn()
