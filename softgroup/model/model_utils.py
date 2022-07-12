@@ -271,8 +271,9 @@ def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
     proposals_offset_final = torch.tensor(proposals_offset_final)
     proposals_box_final = torch.stack(proposals_box_final, 0) # nProposals, 6
 
+    return proposals_idx_final.int(), proposals_offset_final.int(), proposals_box_final, proposals_conf_final
     # breakpoint()
-    return proposals_idx_final.cpu().int(), proposals_offset_final.cpu().int(), proposals_box_final, proposals_conf_final
+    # return proposals_idx_final.cpu().int(), proposals_offset_final.cpu().int(), proposals_box_final, proposals_conf_final
 
 @torch.no_grad()
 def non_maximum_cluster2(box_conf, coords, pt_offsets, pt_offsets_vertices, batch_offsets, radius=6**2, mean_active=300, iou_thresh=0.3):
@@ -369,13 +370,13 @@ def non_maximum_cluster2(box_conf, coords, pt_offsets, pt_offsets_vertices, batc
             # distances = torch.sum((pivot - centroid_)**2, -1)
 
             # mask = (IoU >= iou_thresh) | (distances < 0.016)
-            # mask = (IoU >= iou_thresh)
-            mask = (iou3 >= iou_thresh) | (iou1 >= 0.5) | (iou2 >= 0.5)
+            mask = (IoU >= iou_thresh)
+            # mask = (iou3 >= iou_thresh) | (iou1 >= 0.5) | (iou2 >= 0.5)
             neighbor_indices = torch.nonzero(mask).view(-1)
             final_neighbor_indices = sort_indices[neighbor_indices]
 
             cluster_indices = torch.cat([final_neighbor_indices, index.unsqueeze(0)])
-            cluster_indices_clone = cluster_indices.clone()
+            # cluster_indices_clone = cluster_indices.clone()
             cluster_indices = cluster_indices + batch_start
             len_cluster = len(cluster_indices)
 

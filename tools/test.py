@@ -110,8 +110,8 @@ def main():
                 result = model(batch)
             results.append(result)
 
-            if i % 10 == 0:
-                logger.info(f'Infer scene {i+1}/{len(dataloader)}')
+            # if i % 10 == 0:
+            logger.info(f'Infer scene {i+1}/{len(dataloader)}')
         #     progress_bar.update(world_size)
         # progress_bar.close()
         results = collect_results_gpu(results, len(dataset))
@@ -164,22 +164,23 @@ def main():
             #             class_name = CLASS_LABELS[cls_id - 2]
             #             box_gt[res['scan_id']].append((class_name, box))
         
-            # if not cfg.model.semantic_only:
-            #     logger.info('Evaluate instance segmentation')
-            #     scannet_eval = ScanNetEval(dataset.CLASSES)
-            #     scannet_eval.evaluate(pred_insts, gt_insts)
-
-            #     if not cfg.model.semantic_only and cfg.model.eval_box:
-            #         logger.info('Evaluate axis-align box prediction')
-            #         scannet_eval.evaluate_box(pred_insts, gt_insts, coords)
-
+        # NOTE eval final inst mask+box
         if not cfg.model.semantic_only:
-            logger.info('Evaluate instance segmentation nmc')
+            logger.info('Evaluate instance segmentation')
             scannet_eval = ScanNetEval(dataset.CLASSES)
-            scannet_eval.evaluate(nmc_insts, gt_insts)
+            scannet_eval.evaluate(pred_insts, gt_insts)
 
-            logger.info('Evaluate axis-align box prediction nmc')
-            scannet_eval.evaluate_box(nmc_insts, gt_insts, coords)
+            logger.info('Evaluate axis-align box prediction')
+            scannet_eval.evaluate_box(pred_insts, gt_insts, coords)
+
+        # # NOTE eval proposal mask_box
+        # if not cfg.model.semantic_only:
+        #     logger.info('Evaluate instance segmentation nmc')
+        #     scannet_eval = ScanNetEval(dataset.CLASSES)
+        #     scannet_eval.evaluate(nmc_insts, gt_insts)
+
+        #     logger.info('Evaluate axis-align box prediction nmc')
+        #     scannet_eval.evaluate_box(nmc_insts, gt_insts, coords)
 
         logger.info('Evaluate semantic segmentation and offset MAE')
         ignore_label = cfg.model.ignore_label

@@ -78,7 +78,7 @@ dataloader:
     num_workers: 16
   test:
     batch_size: 1
-    num_workers: 16
+    num_workers: 1
 
 optimizer:
   type: 'Adam'
@@ -89,7 +89,7 @@ save_cfg:
   offset: False
   instance: False
   offset_vertices: False
-  nmc_clusters: True
+  nmc_clusters: False
 
 fp16: True
 epochs: 40

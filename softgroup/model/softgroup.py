@@ -155,8 +155,8 @@ class SoftGroup(nn.Module):
                 proposals_idx = proposals_idx[:proposals_offset[-1]]
                 assert proposals_idx.shape[0] == proposals_offset[-1]
             inst_feats, inst_map = self.clusters_voxelization(
-                proposals_idx,
-                proposals_offset,
+                proposals_idx.cpu(),
+                proposals_offset.cpu(),
                 output_feats,
                 coords_float,
                 rand_quantize=True,
@@ -299,6 +299,7 @@ class SoftGroup(nn.Module):
             instance_labels = self.merge_4_parts(instance_labels)
             pt_offset_labels = self.merge_4_parts(pt_offset_labels)
         semantic_preds = semantic_scores.max(1)[1]
+        
         ret = dict(
             scan_id=scan_ids[0],
             coords_float=coords_float.cpu().numpy(),
@@ -312,41 +313,45 @@ class SoftGroup(nn.Module):
             proposals_idx, proposals_offset, proposals_box, proposals_conf, proposals_cls = self.forward_grouping(semantic_scores, pt_offsets, pt_offsets_vertices, box_conf,
                                                                     batch_idxs, coords_float,
                                                                     self.grouping_cfg)
+            # proposals_idx, proposals_offset, proposals_box, proposals_conf, proposals_cls = self.forward_grouping_origin(semantic_scores, pt_offsets, pt_offsets_vertices, box_conf,
+            #                                                         batch_idxs, coords_float,
+            #                                                         self.grouping_cfg)
 
             # FIXME DEBUG
-            nmc_clusters = torch.LongTensor(feats.shape[0], 1).fill_(-100)
-            for idx in range(proposals_offset.shape[0]-1):
-                nmc_clusters[proposals_idx[proposals_offset[idx]:proposals_offset[idx+1],1].long()] = idx
-            ret['nmc_clusters'] = nmc_clusters.cpu().numpy()
+            # nmc_clusters = torch.LongTensor(feats.shape[0], 1).fill_(-100)
+            # for idx in range(proposals_offset.shape[0]-1):
+            #     nmc_clusters[proposals_idx[proposals_offset[idx]:proposals_offset[idx+1],1].long()] = idx
+            # ret['nmc_clusters'] = nmc_clusters.cpu().numpy()
 
-            proposals_box = proposals_box.cpu().numpy()
-            proposals_conf = proposals_conf.cpu().numpy()
-            proposals_cls = proposals_cls.cpu().numpy()
+            # proposals_box = proposals_box.cpu().numpy()
+            # proposals_conf = proposals_conf.cpu().numpy()
+            # proposals_cls = proposals_cls.cpu().numpy()
 
-            nmc_instances = []
-            for i in range(proposals_cls.shape[0]):
-                pred = {}
-                pred['scan_id'] = scan_ids[0]
-                pred['label_id'] = proposals_cls[i]
-                pred['conf'] = proposals_conf[i]
-                # rle encode mask to save memory
-                mask_pred = torch.zeros((feats.shape[0]), dtype=torch.int).to(feats.device)
-                mask_pred[proposals_idx[proposals_offset[i]:proposals_offset[i+1],1].long()] = 1
+            # nmc_instances = []
+            # for i in range(proposals_cls.shape[0]):
+            #     pred = {}
+            #     pred['scan_id'] = scan_ids[0]
+            #     pred['label_id'] = proposals_cls[i]
+            #     pred['conf'] = proposals_conf[i]
+            #     # rle encode mask to save memory
+            #     mask_pred = torch.zeros((feats.shape[0]), dtype=torch.int).to(feats.device)
+            #     mask_pred[proposals_idx[proposals_offset[i]:proposals_offset[i+1],1].long()] = 1
 
-                pred['pred_mask'] = rle_encode(mask_pred.cpu().numpy())
-                pred['box'] = proposals_box[i]
-                nmc_instances.append(pred)
-            ret.update(dict(nmc_instances=nmc_instances))
+            #     pred['pred_mask'] = rle_encode(mask_pred.cpu().numpy())
+            #     pred['box'] = proposals_box[i]
+            #     nmc_instances.append(pred)
+            # ret.update(dict(nmc_instances=nmc_instances))
 
 
-            inst_feats, inst_map = self.clusters_voxelization(proposals_idx, proposals_offset,
-                                                              output_feats, coords_float,
-                                                              **self.instance_voxel_cfg)
+            inst_feats, inst_map = self.clusters_voxelization(proposals_idx.cpu(), proposals_offset.cpu(),
+                                                                output_feats, coords_float,
+                                                                **self.instance_voxel_cfg)
             _, cls_scores, iou_scores, mask_scores = self.forward_instance(inst_feats, inst_map)
             pred_instances = self.get_instances(scan_ids[0], proposals_idx, semantic_scores,
                                                 cls_scores, iou_scores, mask_scores, coords_float)
             gt_instances = self.get_gt_instances(semantic_labels, instance_labels)
             ret.update(dict(pred_instances=pred_instances, gt_instances=gt_instances))
+            # ret.update(dict(gt_instances=gt_instances))
 
             # debug_accu = self.debug_accu_classification(cls_scores, mask_scores, iou_scores, proposals_idx,
             #                                    proposals_offset, instance_labels, instance_pointnum,
@@ -463,7 +468,7 @@ class SoftGroup(nn.Module):
 
             # NOTE NMC
             box_conf_ = box_conf_ * scores[object_idxs]
-            proposals_idx, proposals_offset, proposals_box, proposals_conf = non_maximum_cluster2(box_conf_, coords_, pt_offsets_, pt_offsets_vertices_, batch_offsets_, mean_active=self.grouping_cfg.mean_active_nmc, iou_thresh=self.grouping_cfg.iou_thresh)
+            proposals_idx, proposals_offset, proposals_box, proposals_conf = non_maximum_cluster(box_conf_, coords_, pt_offsets_, pt_offsets_vertices_, batch_offsets_, mean_active=self.grouping_cfg.mean_active_nmc, iou_thresh=self.grouping_cfg.iou_thresh)
 
             # TODO measure mAP, mAR
 
@@ -583,7 +588,7 @@ class SoftGroup(nn.Module):
 
             # NOTE NMC
             box_conf_ = box_conf_ * scores[object_idxs]
-            proposals_idx, proposals_offset, proposals_box, proposals_conf = non_maximum_cluster(box_conf_, coords_, pt_offsets_, pt_offsets_vertices_, batch_offsets_, mean_active=self.grouping_cfg.mean_active_nmc, iou_thresh=self.grouping_cfg.iou_thresh)
+            proposals_idx, proposals_offset, _, _ = non_maximum_cluster(box_conf_, coords_, pt_offsets_, pt_offsets_vertices_, batch_offsets_, mean_active=self.grouping_cfg.mean_active_nmc, iou_thresh=self.grouping_cfg.iou_thresh)
 
             # TODO measure mAP, mAR
 
