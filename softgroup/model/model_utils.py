@@ -77,7 +77,7 @@ def iou_aabb(pt_offsets_vertices, pt_offset_vertices_labels, coords):
     pred_volumes = torch.prod(torch.clamp((coords_max_pred - coords_min_pred), min=0.0), -1)
 
     union = gt_volumes + pred_volumes - intersection
-    iou = intersection / union
+    iou = intersection / (union + 1e-6)
     return iou
 
 @torch.no_grad()

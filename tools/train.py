@@ -60,9 +60,7 @@ def train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer):
             meter_dict[k].update(v)
 
         # backward
-        # optimizer.zero_grad()
-        # loss.backward()
-        # optimizer.step()
+        optimizer.zero_grad()
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()

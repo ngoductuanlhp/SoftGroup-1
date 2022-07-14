@@ -71,9 +71,8 @@ class SoftGroup(nn.Module):
         self.offset_linear = MLP(channels, 3, norm_fn=norm_fn, num_layers=2)
 
         # BBox
-        self.offset_vertices_linear = MLP(channels, 3*2, norm_fn=norm_fn, num_layers=2)
-
-        # self.offset_vertices_linear = MLP(channels, 3*8, norm_fn=norm_fn, num_layers=2)
+        # self.offset_vertices_linear = MLP(channels, 3*2, norm_fn=norm_fn, num_layers=2)
+        self.offset_vertices_linear = MLP(channels, 3*8, norm_fn=norm_fn, num_layers=2)
         self.box_conf_linear = MLP(channels, 1, norm_fn=norm_fn, num_layers=2)
 
         # topdown refinement path
@@ -188,7 +187,7 @@ class SoftGroup(nn.Module):
             offset_loss = F.l1_loss(
                 pt_offsets[pos_inds], pt_offset_labels[pos_inds], reduction='sum') / total_pos_inds
 
-            print('pt_offsets_vertices', pt_offsets_vertices.shape)
+            # print('pt_offsets_vertices', pt_offsets_vertices.shape)
             offset_vertices_loss = F.l1_loss(
                 pt_offsets_vertices[pos_inds], pt_offset_vertices_labels[pos_inds], reduction='sum') / total_pos_inds
 
