@@ -158,6 +158,7 @@ def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
     proposals_conf = []
     proposals_indices = []
     proposal_boxes = []
+    proposal_pivots = []
 
     # cluster_id = 0
 
@@ -184,13 +185,6 @@ def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
         while len(sort_indices) > mean_active:
             index = sort_indices[0]
             sort_indices = sort_indices[1:]
-            # while len(sort_indices) > 0:
-            #     index = sort_indices[0]
-            #     sort_indices = sort_indices[1:]
-            #     if visited[index] == False:
-            #         break
-            # if len(sort_indices) < 50:
-            #     break
                     
 
             rem_volumes = torch.index_select(volumes, dim=0, index=sort_indices)
@@ -237,7 +231,7 @@ def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
             len_cluster = len(cluster_indices)
 
             if len_cluster > mean_active:
-
+                proposal_pivots.append(index+batch_start)
                 proposals_conf.append(box_conf[index+batch_start])
                 proposals_indices.append(cluster_indices)
 
@@ -248,10 +242,13 @@ def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
             sort_indices = sort_indices[~mask]
 
     if len(proposals_indices) == 0:
-        return [], [0], None, None
+        return None
 
-    proposals_conf = torch.tensor(proposals_conf)
+    proposal_pivots = torch.tensor(proposal_pivots, dtype=torch.long, device=coords.device)
+    proposals_conf = torch.tensor(proposals_conf, device=coords.device)
+
     proposals_sort_indices = torch.argsort(proposals_conf, descending=True).long()
+    proposal_pivots_final = proposal_pivots[proposals_sort_indices]
     proposals_conf_final = proposals_conf[proposals_sort_indices]
 
     # breakpoint()
@@ -271,9 +268,7 @@ def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
     proposals_offset_final = torch.tensor(proposals_offset_final)
     proposals_box_final = torch.stack(proposals_box_final, 0) # nProposals, 6
 
-    return proposals_idx_final.int(), proposals_offset_final.int(), proposals_box_final, proposals_conf_final
-    # breakpoint()
-    # return proposals_idx_final.cpu().int(), proposals_offset_final.cpu().int(), proposals_box_final, proposals_conf_final
+    return proposals_idx_final.int(), proposals_offset_final.int(), proposals_box_final, proposals_conf_final, proposal_pivots_final
 
 @torch.no_grad()
 def non_maximum_cluster2(box_conf, coords, pt_offsets, pt_offsets_vertices, batch_offsets, radius=6**2, mean_active=300, iou_thresh=0.3):
@@ -419,6 +414,76 @@ def non_maximum_cluster2(box_conf, coords, pt_offsets, pt_offsets_vertices, batc
     return proposals_idx_final.cpu().int(), proposals_offset_final.cpu().int(), proposals_box_final, proposals_conf_final
 
 
+
+def dice_coefficient(x, target):
+    eps = 1e-5
+    # n_inst = 1
+    # x = x.reshape(n_inst, -1)
+    # target = target.reshape(n_inst, -1)
+    intersection = (x * target).sum()
+    union = (x ** 2.0).sum() + (target ** 2.0).sum() + eps
+    loss = 1. - (2 * intersection / union)
+    return loss
+
+def compute_dice_loss(inputs, targets):
+    """
+    Compute the DICE loss, similar to generalized IOU for masks
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example.
+        targets: A float tensor with the same shape as inputs. Stores the binary
+                 classification label for each element in inputs
+                (0 for the negative class and 1 for the positive class).
+    """
+    inputs = inputs.sigmoid()
+    # inputs = inputs.flatten(1)
+    numerator = 2 * (inputs * targets).sum()
+    denominator = inputs.sum() + targets.sum()
+    loss = 1 - (numerator + 1) / (denominator + 1)
+    return loss
+
+def sigmoid_focal_loss(inputs, targets, weights, alpha: float = 0.25, gamma: float = 2):
+    """
+    Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example.
+        targets: A float tensor with the same shape as inputs. Stores the binary
+                 classification label for each element in inputs
+                (0 for the negative class and 1 for the positive class).
+        alpha: (optional) Weighting factor in range (0,1) to balance
+                positive vs negative examples. Default = -1 (no weighting).
+        gamma: Exponent of the modulating factor (1 - p_t) to
+               balance easy vs hard examples.
+    Returns:
+        Loss tensor
+    """
+    prob = inputs.sigmoid()
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+    p_t = prob * targets + (1 - prob) * (1 - targets)
+    loss = ce_loss * ((1 - p_t) ** gamma)
+
+    if alpha >= 0:
+        alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+        loss = alpha_t * loss
+    
+    # return loss.sum()
+
+    loss = (loss * weights).sum()
+    return loss
+
+def get_bounding_vertices(coords_min, coords_max, coords_mean):
+    c1 = torch.cat([coords_min[:, [0]], coords_min[:, [1]], coords_min[:, [2]]], 1)
+    c2 = torch.cat([coords_min[:, [0]], coords_min[:, [1]], coords_max[:, [2]]], 1)
+    c3 = torch.cat([coords_min[:, [0]], coords_max[:, [1]], coords_min[:, [2]]], 1)
+    c4 = torch.cat([coords_min[:, [0]], coords_max[:, [1]], coords_max[:, [2]]], 1)
+    c5 = torch.cat([coords_max[:, [0]], coords_min[:, [1]], coords_min[:, [2]]], 1)
+    c6 = torch.cat([coords_max[:, [0]], coords_min[:, [1]], coords_max[:, [2]]], 1)
+    c7 = torch.cat([coords_max[:, [0]], coords_max[:, [1]], coords_min[:, [2]]], 1)
+    c8 = torch.cat([coords_max[:, [0]], coords_max[:, [1]], coords_max[:, [2]]], 1)
+
+    c = torch.cat([c1, c2, c3, c4, c5, c6, c7, c8, coords_mean], 1)
+    return c
 
 
 
