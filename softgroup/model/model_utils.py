@@ -61,11 +61,11 @@ def sigmoid_focal_loss(inputs, targets, weights, alpha: float = 0.25, gamma: flo
 
 @torch.no_grad()
 def iou_aabb(pt_offsets_vertices, pt_offset_vertices_labels, coords):
-    coords_min_pred = coords + pt_offsets_vertices[:, :3] # N x 3
-    coords_max_pred = coords + pt_offsets_vertices[:, 3:] # N x 3
+    coords_min_pred = coords + pt_offsets_vertices[:, 0:3] # N x 3
+    coords_max_pred = coords + pt_offsets_vertices[:, 3:6] # N x 3
 
-    coords_min_gt = coords + pt_offset_vertices_labels[:, :3] # N x 3
-    coords_max_gt = coords + pt_offset_vertices_labels[:, 3:] # N x 3
+    coords_min_gt = coords + pt_offset_vertices_labels[:, 0:3] # N x 3
+    coords_max_gt = coords + pt_offset_vertices_labels[:, 3:6] # N x 3
 
 
     upper = torch.min(coords_max_pred, coords_max_gt) # Nx3

@@ -84,7 +84,9 @@ class CustomDataset(Dataset):
         instance_cls = []
         instance_num = int(instance_label.max()) + 1
 
-        pt_offset_vertices_label = np.ones((xyz.shape[0], 6), dtype=np.float32) * -100.0
+        # pt_offset_vertices_label = np.ones((xyz.shape[0], 6), dtype=np.float32) * -100.0
+        
+        pt_offset_vertices_label = np.ones((xyz.shape[0], 3*2), dtype=np.float32) * -100.0
 
         for i_ in range(instance_num):
             inst_idx_i = np.where(instance_label == i_)
@@ -98,6 +100,25 @@ class CustomDataset(Dataset):
 
             pt_offset_vertices_label[inst_idx_i, 0:3] = min_xyz_i - xyz_i
             pt_offset_vertices_label[inst_idx_i, 3:6] = max_xyz_i - xyz_i
+
+
+            # min_x_i = xyz_i[np.argmin(xyz_i[:,0])]
+            # min_y_i = xyz_i[np.argmin(xyz_i[:,1])]
+            # min_z_i = xyz_i[np.argmin(xyz_i[:,2])]
+            # max_x_i = xyz_i[np.argmax(xyz_i[:,0])]
+            # max_y_i = xyz_i[np.argmax(xyz_i[:,1])]
+            # max_z_i = xyz_i[np.argmax(xyz_i[:,2])]
+
+            # # print(min_x_i, min_y_i, min_z_i, max_x_i, max_y_i, max_z_i) 
+
+
+            # pt_offset_vertices_label[inst_idx_i, 6:9] = min_x_i - xyz_i
+            # pt_offset_vertices_label[inst_idx_i, 9:12] = min_y_i - xyz_i
+            # pt_offset_vertices_label[inst_idx_i, 12:15] = min_z_i - xyz_i
+
+            # pt_offset_vertices_label[inst_idx_i, 15:18] = max_x_i - xyz_i
+            # pt_offset_vertices_label[inst_idx_i, 18:21] = max_y_i - xyz_i
+            # pt_offset_vertices_label[inst_idx_i, 21:24] = max_z_i - xyz_i
 
             instance_pointnum.append(inst_idx_i[0].size)
             cls_idx = inst_idx_i[0][0]
