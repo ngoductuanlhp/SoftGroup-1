@@ -1,4 +1,5 @@
 import argparse
+from cmath import e
 import datetime
 import os
 import os.path as osp
@@ -99,6 +100,8 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
     with torch.no_grad():
         model.eval()
         for i, batch in enumerate(val_loader):
+            if epoch == 0 and i > 30:
+                break # NOTE validate at begin
             with torch.cuda.amp.autocast(enabled=cfg.fp16):
                 result = model(batch)
             results.append(result)
@@ -136,21 +139,24 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
         else:
             logger.info('Evaluate instance segmentation')
             scannet_eval = ScanNetEval(val_set.CLASSES)
-            eval_res = scannet_eval.evaluate(all_pred_insts, all_gt_insts)
-            del all_pred_insts, all_gt_insts
-            writer.add_scalar('val/AP', eval_res['all_ap'], epoch)
-            writer.add_scalar('val/AP_50', eval_res['all_ap_50%'], epoch)
-            writer.add_scalar('val/AP_25', eval_res['all_ap_25%'], epoch)
-            logger.info('AP: {:.3f}. AP_50: {:.3f}. AP_25: {:.3f}'.format(
-                eval_res['all_ap'], eval_res['all_ap_50%'], eval_res['all_ap_25%']))
+            try:
+                eval_res = scannet_eval.evaluate(all_pred_insts, all_gt_insts)
+                del all_pred_insts, all_gt_insts
+                writer.add_scalar('val/AP', eval_res['all_ap'], epoch)
+                writer.add_scalar('val/AP_50', eval_res['all_ap_50%'], epoch)
+                writer.add_scalar('val/AP_25', eval_res['all_ap_25%'], epoch)
+                logger.info('AP: {:.3f}. AP_50: {:.3f}. AP_25: {:.3f}'.format(
+                    eval_res['all_ap'], eval_res['all_ap_50%'], eval_res['all_ap_25%']))
 
-            if len(all_debug_accu) > 0:
-                accu = np.mean(np.array(all_debug_accu))
-                logger.info('Mean accuracy of classification: {:.3f}'.format(accu))
+                if len(all_debug_accu) > 0:
+                    accu = np.mean(np.array(all_debug_accu))
+                    logger.info('Mean accuracy of classification: {:.3f}'.format(accu))
 
-            if best_metric < eval_res['all_ap_50%']:
-                best_metric = eval_res['all_ap_50%']
-                checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq, best=True)
+                if best_metric < eval_res['all_ap_50%']:
+                    best_metric = eval_res['all_ap_50%']
+                    checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq, best=True)
+            except:
+                logger.info('Error when eval')
 
 
 def main():
@@ -222,6 +228,8 @@ def main():
 
     global best_metric
     best_metric = 0
+
+    # validate(0, model, optimizer, val_loader, cfg, logger, writer)
     for epoch in range(start_epoch, cfg.epochs + 1):
         train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer)
         if not args.skip_validate and (is_multiple(epoch, cfg.save_freq) or is_power2(epoch)):

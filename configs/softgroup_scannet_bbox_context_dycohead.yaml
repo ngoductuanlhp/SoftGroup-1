@@ -42,7 +42,7 @@ data:
     prefix: 'train'
     suffix: '_inst_nostuff.pth'
     training: True
-    repeat: 1
+    repeat: 4
     voxel_cfg:
       scale: 50
       spatial_shape: [128, 512]
@@ -62,8 +62,8 @@ data:
 
 dataloader:
   train:
-    batch_size: 6
-    num_workers: 2
+    batch_size: 8
+    num_workers: 8
   test:
     batch_size: 1
     num_workers: 4
@@ -80,8 +80,8 @@ save_cfg:
   nmc_clusters: False
 
 fp16: True
-epochs: 40
-step_epoch: 20
+epochs: 64
+step_epoch: 25
 save_freq: 4
-pretrain: './work_dirs/softgroup_scannet_bbox_context_head/iou_conf_nmc_no_coord_embed/best.pth'
+pretrain: './pretrains/best_bbox_context_head_no_coord_embed.pth'
 work_dir: ''

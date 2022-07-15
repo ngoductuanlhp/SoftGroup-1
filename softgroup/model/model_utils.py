@@ -226,7 +226,7 @@ def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
             final_neighbor_indices = sort_indices[neighbor_indices]
 
             cluster_indices = torch.cat([final_neighbor_indices, index.unsqueeze(0)])
-            cluster_indices_clone = cluster_indices.clone()
+            # cluster_indices_clone = cluster_indices.clone()
             cluster_indices = cluster_indices + batch_start
             len_cluster = len(cluster_indices)
 
