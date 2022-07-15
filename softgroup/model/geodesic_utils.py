@@ -91,8 +91,8 @@ def cal_geodesic_vectorize(gpu_index, pre_enc_inds, locs_float_, batch_offsets_,
     
     # batch_size = pre_enc_inds.shape[0]
     # geo_dists = []
-    num_insts = proposals_batch_idxs_.max()+1
-    geo_dists = torch.zeros((num_insts, batch_offsets_[-1]-1), dtype=torch.float32, device=locs_float_.device) - 1
+    num_insts = len(proposals_batch_idxs_)
+    geo_dists = torch.zeros((num_insts, batch_offsets_[-1]), dtype=torch.float32, device=locs_float_.device) - 1
     for b in range(batch_size):
         start = batch_offsets_[b]
         end = batch_offsets_[b+1]
@@ -108,6 +108,7 @@ def cal_geodesic_vectorize(gpu_index, pre_enc_inds, locs_float_, batch_offsets_,
         query_inds = pre_enc_inds[inst_inds].long() - start
         locs_float_b = locs_float_[start:end]
 
+
         n_points = locs_float_b.shape[0]
         n_queries = query_inds.shape[0]
 
@@ -119,6 +120,9 @@ def cal_geodesic_vectorize(gpu_index, pre_enc_inds, locs_float_, batch_offsets_,
 
         geo_dist = torch.zeros((n_queries, n_points), dtype=torch.float32, device=locs_float_.device) - 1
         visited = torch.zeros((n_queries, n_points), dtype=torch.bool, device=locs_float_.device)
+
+
+        # print(start, end, locs_float_b.shape, geo_dist.shape)
         
         arange_tensor = torch.arange(0, n_queries, dtype=torch.long, device=locs_float_.device)
 
@@ -168,6 +172,7 @@ def cal_geodesic_vectorize(gpu_index, pre_enc_inds, locs_float_, batch_offsets_,
             points_distances = distances_new_cumsum[temp_inds, neighbors_inds]  # n_temp2
             queries_inds = queries_inds[temp_inds, neighbors_inds]  # n_temp2
         
-        geo_dists[p_start:p_end, start:end] = geo_dist
+        # breakpoint()
+        geo_dists[inst_inds, start:end] = geo_dist
     # geo_dists.append(geo_dist)
     return geo_dists

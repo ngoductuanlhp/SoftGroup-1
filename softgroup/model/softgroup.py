@@ -737,7 +737,7 @@ class SoftGroup(nn.Module):
 
             # breakpoint()
             # NOTE process geodist
-            relative_geo_dist = cal_geodesic_vectorize(self.geo_knn, pivot_inds, coords_, batch_offsets_, proposal_batch_offsets_, batch_size,
+            relative_geo_dist = cal_geodesic_vectorize(self.geo_knn, pivot_inds, coords_, batch_offsets_, proposals_batch_idxs_, batch_size,
                                                     max_step=128 if self.training else 256,
                                                     neighbor=64,
                                                     radius=0.05) # n_inst, n_points
