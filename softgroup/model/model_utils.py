@@ -80,34 +80,35 @@ def iou_aabb(pt_offsets_vertices, pt_offset_vertices_labels, coords):
     iou = intersection / (union + 1e-6)
     return iou
 
-@torch.no_grad()
-def iou_aabb_single(coords_min_pivot, coords_max_pivot, coords_min_neighbors, coords_max_neighbors):
-    # coords_min_pred : 1 x 3
-    n_neighbors = coords_min_neighbors.shape[0]
-    coords_min_pivot = coords_min_pivot.repeat(n_neighbors, 1)
-    coords_max_pivot = coords_max_pivot.repeat(n_neighbors, 1)
 
-    coords_min = torch.stack([coords_min_pivot, coords_min_neighbors], -1) # Nx3x2
-    coords_max = torch.stack([coords_max_pivot, coords_max_neighbors], -1) # Nx3x2
+def giou_aabb(pt_offsets_vertices, pt_offset_vertices_labels, coords):
+    coords_min_pred = coords + pt_offsets_vertices[:, 0:3] # N x 3
+    coords_max_pred = coords + pt_offsets_vertices[:, 3:6] # N x 3
 
-    coords = torch.cat([coords_min, coords_max], -1) # Nx3x4
+    coords_min_gt = coords + pt_offset_vertices_labels[:, 0:3] # N x 3
+    coords_max_gt = coords + pt_offset_vertices_labels[:, 3:6] # N x 3
 
-    upper = torch.min(coords_max, -1)[0] # Nx3
-    lower = torch.max(coords_min, -1)[0] # Nx3
 
-    range = (upper - lower) 
-    range[range < 0] = 0
+    upper = torch.min(coords_max_pred, coords_max_gt) # Nx3
+    lower = torch.max(coords_min_pred, coords_min_gt) # Nx3
 
-    intersection = torch.prod(range, -1) # N
+    intersection = torch.prod(torch.clamp((upper - lower), min=0.0), -1) # N
 
-    union_min = torch.min(coords, -1)[0] # Nx3
-    union_max = torch.max(coords, -1)[0] # Nx3
-    union = union_max - union_min
-    union = torch.prod(union, -1) # N
-    union[union<=0] = 1e-6
+    gt_volumes = torch.prod(torch.clamp((coords_max_gt - coords_min_gt), min=0.0), -1)
+    pred_volumes = torch.prod(torch.clamp((coords_max_pred - coords_min_pred), min=0.0), -1)
 
-    iou = intersection / union
-    return iou
+    union = gt_volumes + pred_volumes - intersection
+    iou = intersection / (union + 1e-6)
+
+    upper_bound = torch.max(coords_max_pred, coords_max_gt)
+    lower_bound = torch.min(coords_min_pred, coords_min_gt)
+
+    volumes_bound = torch.prod(torch.clamp((upper_bound - lower_bound), min=0.0), -1) # N
+
+    giou = iou - (volumes_bound - union) / (volumes_bound + 1e-6)
+
+    return iou, giou
+
 
 def cal_iou(volumes, x1, y1, z1, x2, y2, z2, sort_indices, index):
     rem_volumes = torch.index_select(volumes, dim=0, index=sort_indices)
@@ -142,6 +143,51 @@ def cal_iou(volumes, x1, y1, z1, x2, y2, z2, sort_indices, index):
     IoU = inter / union
 
     return IoU
+
+def cal_giou(volumes, x1, y1, z1, x2, y2, z2, sort_indices, index):
+    rem_volumes = torch.index_select(volumes, dim=0, index=sort_indices)
+
+    xx1 = torch.index_select(x1, dim=0, index=sort_indices)
+    xx2 = torch.index_select(x2, dim=0, index=sort_indices)
+    yy1 = torch.index_select(y1, dim=0, index=sort_indices)
+    yy2 = torch.index_select(y2, dim=0, index=sort_indices)
+    zz1 = torch.index_select(z1, dim=0, index=sort_indices)
+    zz2 = torch.index_select(z2, dim=0, index=sort_indices)
+
+    # centroid_ = torch.index_select(centroid, dim=0, index=sort_indices)
+    # pivot = centroid[[index]]
+
+
+    xx1 = torch.max(xx1, x1[index])
+    yy1 = torch.max(yy1, y1[index])
+    zz1 = torch.max(zz1, z1[index])
+    xx2 = torch.min(xx2, x2[index])
+    yy2 = torch.min(yy2, y2[index])
+    zz2 = torch.min(zz2, z2[index])
+
+
+    l = torch.clamp(xx2 - xx1, min=0.0)
+    w = torch.clamp(yy2 - yy1, min=0.0)
+    h = torch.clamp(zz2 - zz1, min=0.0)
+
+    inter = w*h*l
+
+    union = (rem_volumes - inter) + volumes[index]
+
+    IoU = inter / union
+
+    x_min_bound = torch.min(xx1, x1[index])
+    y_min_bound = torch.min(yy1, y1[index])
+    z_min_bound = torch.min(zz1, z1[index])
+    x_max_bound = torch.max(xx2, x2[index])
+    y_max_bound = torch.max(yy2, y2[index])
+    z_max_bound = torch.max(zz2, z2[index])
+
+    convex_area = (x_max_bound-x_min_bound)*(y_max_bound-y_min_bound)*(z_max_bound-z_min_bound)
+    gIoU = IoU - (convex_area - union)/(convex_area + 1e-6)
+
+
+    return IoU, gIoU
 
 @torch.no_grad()
 def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch_offsets, radius=6**2, mean_active=300, iou_thresh=0.3):
@@ -178,51 +224,11 @@ def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
 
         sort_indices = torch.argsort(box_conf[batch_start:batch_end], descending=True)
 
-        # visited = torch.zeros((batch_end - batch_start), dtype=torch.bool, device=box_conf.device)
-
-
         while len(sort_indices) > mean_active:
             index = sort_indices[0]
             sort_indices = sort_indices[1:]
-            # while len(sort_indices) > 0:
-            #     index = sort_indices[0]
-            #     sort_indices = sort_indices[1:]
-            #     if visited[index] == False:
-            #         break
-            # if len(sort_indices) < 50:
-            #     break
-                    
 
-            rem_volumes = torch.index_select(volumes, dim=0, index=sort_indices)
-
-            xx1 = torch.index_select(x1, dim=0, index=sort_indices)
-            xx2 = torch.index_select(x2, dim=0, index=sort_indices)
-            yy1 = torch.index_select(y1, dim=0, index=sort_indices)
-            yy2 = torch.index_select(y2, dim=0, index=sort_indices)
-            zz1 = torch.index_select(z1, dim=0, index=sort_indices)
-            zz2 = torch.index_select(z2, dim=0, index=sort_indices)
-
-            # centroid_ = torch.index_select(centroid, dim=0, index=sort_indices)
-            # pivot = centroid[[index]]
-
-
-            xx1 = torch.max(xx1, x1[index])
-            yy1 = torch.max(yy1, y1[index])
-            zz1 = torch.max(zz1, z1[index])
-            xx2 = torch.min(xx2, x2[index])
-            yy2 = torch.min(yy2, y2[index])
-            zz2 = torch.min(zz2, z2[index])
-
-
-            l = torch.clamp(xx2 - xx1, min=0.0)
-            w = torch.clamp(yy2 - yy1, min=0.0)
-            h = torch.clamp(zz2 - zz1, min=0.0)
-
-            inter = w*h*l
-
-            union = (rem_volumes - inter) + volumes[index]
-
-            IoU = inter / union
+            IoU = cal_iou(volumes, x1, y1, z1, x2, y2, z2, sort_indices, index)
 
             # distances = torch.sum((pivot - centroid_)**2, -1)
 
@@ -232,7 +238,7 @@ def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
             final_neighbor_indices = sort_indices[neighbor_indices]
 
             cluster_indices = torch.cat([final_neighbor_indices, index.unsqueeze(0)])
-            cluster_indices_clone = cluster_indices.clone()
+            # cluster_indices_clone = cluster_indices.clone()
             cluster_indices = cluster_indices + batch_start
             len_cluster = len(cluster_indices)
 

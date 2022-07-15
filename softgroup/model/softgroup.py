@@ -11,7 +11,7 @@ from ..ops import (ballquery_batch_p, ballquery_batch_p_boxiou, bfs_cluster, get
                    voxelization_idx)
 from ..util import cuda_cast, force_fp32, rle_encode
 from .blocks import MLP, ResidualBlock, UBlock, PositionalEmbedding
-from .model_utils import iou_aabb, compute_dice_loss, sigmoid_focal_loss, non_maximum_cluster, non_maximum_cluster2
+from .model_utils import giou_aabb, iou_aabb, compute_dice_loss, sigmoid_focal_loss, non_maximum_cluster, non_maximum_cluster2
 import numpy as np
 
 
@@ -71,8 +71,8 @@ class SoftGroup(nn.Module):
         self.offset_linear = MLP(channels, 3, norm_fn=norm_fn, num_layers=2)
 
         # BBox
-        # self.offset_vertices_linear = MLP(channels, 3*2, norm_fn=norm_fn, num_layers=2)
-        self.offset_vertices_linear = MLP(channels, 3*8, norm_fn=norm_fn, num_layers=2)
+        self.offset_vertices_linear = MLP(channels, 3*2, norm_fn=norm_fn, num_layers=2)
+        # self.offset_vertices_linear = MLP(channels, 3*8, norm_fn=norm_fn, num_layers=2)
         self.box_conf_linear = MLP(channels, 1, norm_fn=norm_fn, num_layers=2)
 
         # topdown refinement path
@@ -183,6 +183,7 @@ class SoftGroup(nn.Module):
             offset_loss = 0 * pt_offsets.sum()
             offset_vertices_loss = 0 * pt_offsets_vertices.sum()
             point_iou_loss = 0 * box_conf.sum()
+            giou_loss = 0 * box_conf.sum()
         else:
             offset_loss = F.l1_loss(
                 pt_offsets[pos_inds], pt_offset_labels[pos_inds], reduction='sum') / total_pos_inds
@@ -191,8 +192,11 @@ class SoftGroup(nn.Module):
             offset_vertices_loss = F.l1_loss(
                 pt_offsets_vertices[pos_inds], pt_offset_vertices_labels[pos_inds], reduction='sum') / total_pos_inds
 
-            iou_gt = iou_aabb(pt_offsets_vertices[pos_inds], pt_offset_vertices_labels[pos_inds], coords_float[pos_inds])
-
+            # iou_gt = iou_aabb(pt_offsets_vertices[pos_inds], pt_offset_vertices_labels[pos_inds], coords_float[pos_inds])
+            iou_gt, giou = giou_aabb(pt_offsets_vertices[pos_inds], pt_offset_vertices_labels[pos_inds], coords_float[pos_inds])
+            iou_gt = iou_gt.detach()
+            
+            giou_loss = torch.sum(1 - giou) / total_pos_inds
             # breakpoint()
             point_iou_loss = F.mse_loss(box_conf[pos_inds], iou_gt, reduction='none')
             point_iou_loss = point_iou_loss.sum() / total_pos_inds
@@ -203,6 +207,8 @@ class SoftGroup(nn.Module):
 
         losses['offset_loss'] = offset_loss
         losses['offset_vertices_loss'] = offset_vertices_loss
+
+        losses['giou_loss'] = giou_loss
         return losses
 
     @force_fp32(apply_to=('cls_scores', 'mask_scores', 'iou_scores'))
