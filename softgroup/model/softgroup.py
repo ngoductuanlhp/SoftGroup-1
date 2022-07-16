@@ -12,6 +12,8 @@ from ..ops import (ballquery_batch_p, ballquery_batch_p_boxiou, bfs_cluster, get
 from ..util import cuda_cast, force_fp32, rle_encode
 from .blocks import MLP, ResidualBlock, UBlock, PositionalEmbedding
 from .model_utils import giou_aabb, iou_aabb, compute_dice_loss, sigmoid_focal_loss, non_maximum_cluster, non_maximum_cluster2
+from ..pointnet2 import pointnet2_utils
+
 import numpy as np
 
 
@@ -148,9 +150,33 @@ class SoftGroup(nn.Module):
 
         # instance losses
         if not self.semantic_only:
-            proposals_idx, proposals_offset = self.forward_grouping(semantic_scores, pt_offsets, pt_offsets_vertices, box_conf,
-                                                                    batch_idxs, coords_float,
-                                                                    self.grouping_cfg)
+            n_points = 8192
+            sampling_inds = self.forward_sampling(
+                                    semantic_scores,
+                                    batch_idxs,
+                                    coords_float,
+                                    batch_size,
+                                    n_points=n_points) # batch, n_points
+            
+            n_points_arr = [n_points, n_points//2, n_points//4]
+            n_query = 128
+
+            coords_float_context_arr = []
+            output_feats_context_arr = []
+
+            coords_float_context_l3 = torch.stack([coords_float[sampling_inds[b][:n_points]] for b in range(batch_size)], dim=0) # batch, n_points, channel
+            output_feats_context_l3 = torch.stack([output_feats[sampling_inds[b][:n_points]] for b in range(batch_size)], dim=0) # batch, n_points, channel
+
+            coords_float_context_l2 = coords_float_context_l3[:,:n_points_arr[1],:]
+            output_feats_context_l2 = output_feats_context_l3[:,:n_points_arr[1],:]
+
+            coords_float_context_l1 = coords_float_context_l3[:,:n_points_arr[2],:]
+            output_feats_context_l1 = output_feats_context_l3[:,:n_points_arr[2],:]
+
+            coords_float_query = coords_float_context_l3[:, :n_query, :]
+            coords_float_query = output_feats_context_l3[:, :n_query, :]
+
+
             if proposals_offset.shape[0] > self.train_cfg.max_proposal_num:
                 proposals_offset = proposals_offset[:self.train_cfg.max_proposal_num + 1]
                 proposals_idx = proposals_idx[:proposals_offset[-1]]
@@ -373,14 +399,10 @@ class SoftGroup(nn.Module):
 
         context = torch.no_grad if self.freeze_backbone else torch.enable_grad
         with context():
-            if x4_split:
-                output_feats = self.forward_4_parts(input, input_map)
-                output_feats = self.merge_4_parts(output_feats)
-            else:
-                output = self.input_conv(input)
-                output = self.unet(output)
-                output = self.output_layer(output)
-                output_feats = output.features[input_map.long()]
+            output = self.input_conv(input)
+            output = self.unet(output)
+            output = self.output_layer(output)
+            output_feats = output.features[input_map.long()]
 
             semantic_scores = self.semantic_linear(output_feats)
             pt_offsets = self.offset_linear(output_feats)
@@ -388,36 +410,38 @@ class SoftGroup(nn.Module):
             box_conf = self.box_conf_linear(output_feats).squeeze(-1)
             return semantic_scores, pt_offsets, pt_offsets_vertices, box_conf, output_feats
 
-    def forward_4_parts(self, x, input_map):
-        """Helper function for s3dis: devide and forward 4 parts of a scene."""
-        outs = []
-        for i in range(4):
-            inds = x.indices[:, 0] == i
-            feats = x.features[inds]
-            coords = x.indices[inds]
-            coords[:, 0] = 0
-            x_new = spconv.SparseConvTensor(
-                indices=coords, features=feats, spatial_shape=x.spatial_shape, batch_size=1)
-            out = self.input_conv(x_new)
-            out = self.unet(out)
-            out = self.output_layer(out)
-            outs.append(out.features)
-        outs = torch.cat(outs, dim=0)
-        return outs[input_map.long()]
+    @torch.no_grad()
+    def forward_sampling(self,
+                         semantic_scores,
+                         batch_idxs,
+                         coords_float,
+                         batch_size,
+                         n_points=8192):
 
-    def merge_4_parts(self, x):
-        """Helper function for s3dis: take output of 4 parts and merge them."""
-        inds = torch.arange(x.size(0), device=x.device)
-        p1 = inds[::4]
-        p2 = inds[1::4]
-        p3 = inds[2::4]
-        p4 = inds[3::4]
-        ps = [p1, p2, p3, p4]
-        x_split = torch.split(x, [p.size(0) for p in ps])
-        x_new = torch.zeros_like(x)
-        for i, p in enumerate(ps):
-            x_new[p] = x_split[i]
-        return x_new
+        # semantic_scores_sm = F.softmax(semantic_scores, dim=-1)
+        semantic_scores_pred = torch.max(semantic_scores, dim=-1) # N_points
+        
+        object_conditions = torch.ones(semantic_scores.shape[0], dtype=torch.bool, device=semantic_scores.device)
+        for class_id in self.grouping_cfg.ignore_classes:
+            object_conditions = object_conditions & (semantic_scores_pred != class_id)
+
+        object_idxs = torch.nonzero(object_conditions).view(-1)
+        # if object_idxs.size(0) >= self.test_cfg.min_npoint:
+        batch_idxs_ = batch_idxs[object_idxs]
+        coords_float_ = coords_float[object_idxs]
+        batch_offsets_ = self.get_batch_offsets(batch_idxs_, batch_size)
+
+        inds = []
+        for b in range(batch_size):
+            start, end = batch_offsets_[b], batch_offsets_[b+1]
+            coords_float_b = coords_float_[start:end].unsqueeze(0)
+            inds_b = pointnet2_utils.furthest_point_sample(coords_float_b, n_points) + start # 1 x n_points 
+            inds.append(inds_b)
+        inds = torch.cat(inds, dim=0) # batch x n_points
+
+        inds = object_idxs[inds]
+        return inds
+        
 
     @torch.no_grad()
     @force_fp32(apply_to=('semantic_scores, pt_offsets'))
