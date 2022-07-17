@@ -158,36 +158,9 @@ class SoftGroup(nn.Module):
                                     batch_size,
                                     n_points=n_points) # batch, n_points
             
-            n_points_arr = [n_points, n_points//2, n_points//4]
-            n_query = 128
-
-            coords_float_context_arr = []
-            output_feats_context_arr = []
-
-            coords_float_context_l3 = torch.stack([coords_float[sampling_inds[b][:n_points]] for b in range(batch_size)], dim=0) # batch, n_points, channel
-            output_feats_context_l3 = torch.stack([output_feats[sampling_inds[b][:n_points]] for b in range(batch_size)], dim=0) # batch, n_points, channel
-
-            coords_float_context_l2 = coords_float_context_l3[:,:n_points_arr[1],:]
-            output_feats_context_l2 = output_feats_context_l3[:,:n_points_arr[1],:]
-
-            coords_float_context_l1 = coords_float_context_l3[:,:n_points_arr[2],:]
-            output_feats_context_l1 = output_feats_context_l3[:,:n_points_arr[2],:]
-
-            coords_float_query = coords_float_context_l3[:, :n_query, :]
-            coords_float_query = output_feats_context_l3[:, :n_query, :]
 
 
-            if proposals_offset.shape[0] > self.train_cfg.max_proposal_num:
-                proposals_offset = proposals_offset[:self.train_cfg.max_proposal_num + 1]
-                proposals_idx = proposals_idx[:proposals_offset[-1]]
-                assert proposals_idx.shape[0] == proposals_offset[-1]
-            inst_feats, inst_map = self.clusters_voxelization(
-                proposals_idx.cpu(),
-                proposals_offset.cpu(),
-                output_feats,
-                coords_float,
-                rand_quantize=True,
-                **self.instance_voxel_cfg)
+            
             instance_batch_idxs, cls_scores, iou_scores, mask_scores = self.forward_instance(
                 inst_feats, inst_map)
             instance_loss = self.instance_loss(cls_scores, mask_scores, iou_scores, proposals_idx,
@@ -442,6 +415,27 @@ class SoftGroup(nn.Module):
         inds = object_idxs[inds]
         return inds
         
+    def prepare_context_query(self, coords_float, output_feats, sampling_inds, batch_size, n_points=8192):
+
+        n_points_arr = [n_points, n_points//2, n_points//4]
+        n_query = 128
+
+        coords_float_context_arr = []
+        output_feats_context_arr = []
+
+        coords_float_context_l3 = torch.stack([coords_float[sampling_inds[b][:n_points]] for b in range(batch_size)], dim=0) # batch, n_points, channel
+        output_feats_context_l3 = torch.stack([output_feats[sampling_inds[b][:n_points]] for b in range(batch_size)], dim=0) # batch, n_points, channel
+
+        coords_float_context_l2 = coords_float_context_l3[:,:n_points_arr[1],:]
+        output_feats_context_l2 = output_feats_context_l3[:,:n_points_arr[1],:]
+
+        coords_float_context_l1 = coords_float_context_l3[:,:n_points_arr[2],:]
+        output_feats_context_l1 = output_feats_context_l3[:,:n_points_arr[2],:]
+
+        coords_float_query = coords_float_context_l3[:, :n_query, :]
+        coords_float_query = output_feats_context_l3[:, :n_query, :]
+
+        coords_float_context_arr = [coords_float_context_l1, coords_float_context_l2, coords_float_context_l3]
 
     @torch.no_grad()
     @force_fp32(apply_to=('semantic_scores, pt_offsets'))
