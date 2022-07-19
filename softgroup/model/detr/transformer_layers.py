@@ -92,27 +92,22 @@ class TransformerDecoder(nn.Module):
                            memory_key_padding_mask=memory_key_padding_mask,
                            pos=pos, query_pos=query_pos, relative_pos=relative_pos,
                            return_attn_weights=return_attn_weights)
-
-            norm_output = self.norm(output)
-            if transpose_swap:
-                norm_output = norm_output.permute(1, 2, 0)
-
             if self.return_intermediate:
-                intermediate.append(norm_output)
+                intermediate.append(self.norm(output))
             # if return_attn_weights:
             #     attns.append(attn)
 
-        # if self.norm is not None:
-        #     output = self.norm(output)
-        #     if self.return_intermediate:
-        #         intermediate.pop()
-        #         intermediate.append(output)
+        if self.norm is not None:
+            output = self.norm(output)
+            if self.return_intermediate:
+                intermediate.pop()
+                intermediate.append(output)
 
 
         if self.return_intermediate:
             return torch.stack(intermediate)
 
-        return norm_output
+        return output
         
 
 

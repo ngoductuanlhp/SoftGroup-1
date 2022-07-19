@@ -187,3 +187,66 @@ class PositionalEmbedding(nn.Module):
                 out += [func(freq*x)]
 
         return torch.cat(out, -1)
+
+class Conv1d(torch.nn.Conv1d):
+    def __init__(self, *args, **kwargs):
+        """
+        Extra keyword arguments supported in addition to those in `torch.nn.Conv2d`:
+        Args:
+            norm (nn.Module, optional): a normalization layer
+            activation (callable(Tensor) -> Tensor): a callable activation function
+        It assumes that norm layer is used before activation.
+        """
+        norm = kwargs.pop("norm", None)
+        activation = kwargs.pop("activation", None)
+        super().__init__(*args, **kwargs)
+
+        self.norm = norm
+        self.activation = activation
+
+    def forward(self, x):
+        if x.numel() == 0 and self.training:
+            # https://github.com/pytorch/pytorch/issues/12013
+            assert not isinstance(
+                self.norm, torch.nn.SyncBatchNorm
+            ), "SyncBatchNorm does not support empty inputs!"
+
+        x = super().forward(x)
+        if self.norm is not None:
+            x = self.norm(x)
+        if self.activation is not None:
+            x = self.activation(x)
+        return x
+
+def conv_with_kaiming_uniform(norm=None, activation=None, use_sep=False):
+    def make_conv(in_channels, out_channels):
+        conv_func = Conv1d
+        if use_sep:
+            assert in_channels == out_channels
+            groups = in_channels
+        else:
+            groups = 1
+
+        conv = conv_func(in_channels,
+                         out_channels,
+                         kernel_size=1,
+                         stride=1,
+                         padding=0,
+                         groups=groups,
+                         bias=(norm is None))
+
+        nn.init.kaiming_uniform_(conv.weight, a=1)
+        if norm is None:
+            nn.init.constant_(conv.bias, 0)
+
+        module = [conv,]
+        if norm is not None and len(norm) > 0:
+            norm_module = torch.nn.BatchNorm1d(out_channels)
+            module.append(norm_module)
+        if activation is not None:
+            module.append(nn.ReLU(inplace=True))
+        if len(module) > 1:
+            return nn.Sequential(*module)
+        return conv
+
+    return make_conv

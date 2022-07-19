@@ -2,10 +2,53 @@ import torch
 import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
-from .model_utils import giou_aabb, iou_aabb, compute_dice_loss, sigmoid_focal_loss, non_maximum_cluster, non_maximum_cluster2
+from .model_utils import giou_aabb, iou_aabb, non_maximum_cluster, non_maximum_cluster2
 
 from .matcher import giou_aabb_matcher
 
+def compute_dice_loss(inputs, targets, num_boxes):
+    """
+    Compute the DICE loss, similar to generalized IOU for masks
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example.
+        targets: A float tensor with the same shape as inputs. Stores the binary
+                 classification label for each element in inputs
+                (0 for the negative class and 1 for the positive class).
+    """
+    inputs = inputs.sigmoid()
+    # inputs = inputs.flatten(1)
+    numerator = 2 * (inputs * targets).sum(1)
+    denominator = inputs.sum(-1) + targets.sum(-1)
+    loss = 1 - (numerator + 1) / (denominator + 1)
+    return loss.sum() / (num_boxes + 1e-6)
+
+def compute_sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
+    """
+    Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example.
+        targets: A float tensor with the same shape as inputs. Stores the binary
+                 classification label for each element in inputs
+                (0 for the negative class and 1 for the positive class).
+        alpha: (optional) Weighting factor in range (0,1) to balance
+                positive vs negative examples. Default = -1 (no weighting).
+        gamma: Exponent of the modulating factor (1 - p_t) to
+               balance easy vs hard examples.
+    Returns:
+        Loss tensor
+    """
+    prob = inputs.sigmoid()
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+    p_t = prob * targets + (1 - prob) * (1 - targets)
+    loss = ce_loss * ((1 - p_t) ** gamma)
+
+    if alpha >= 0:
+        alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+        loss = alpha_t * loss
+
+    return loss.mean(1).sum() / (num_boxes + 1e-6)
 class Criterion(nn.Module):
     def __init__(self,
                 matcher,
@@ -30,10 +73,10 @@ class Criterion(nn.Module):
         self.register_buffer("empty_weight", empty_weight)
 
         self.loss_weight = {
-            'ce_loss': 1,
-            'offset_loss': 1,
-            'conf_loss': 1,
-            'giou_loss': 1.
+            'dice_loss': 1,
+            'focal_loss': 1,
+            'cls_loss': 1,
+            # 'giou_loss': 1.
         }
 
     def _get_src_permutation_idx(self, indices):
@@ -148,15 +191,56 @@ class Criterion(nn.Module):
         
         
 
-    def single_layer_loss(self, cls_preds, box_offset_preds, conf_preds, coords_float_query, cls_labels, box_labels, indices):
-        loss = torch.tensor(0.0, requires_grad=True).to(cls_preds.device)
+    def single_layer_loss(self, mask_logits_list, cls_logits, row_indices, cls_labels, inst_labels, batch_size, n_queries):
+        loss = torch.tensor(0.0, requires_grad=True, device=cls_logits.device, dtype=torch.float)
+        # loss = 0.0
         loss_dict = {}
+
+        for k in self.loss_weight:
+            loss_dict[k] = torch.tensor(0.0, requires_grad=True, device=cls_logits.device, dtype=torch.float)
+            # loss_dict[k] = 0
         
-        loss_dict.update(self.loss_labels(cls_preds, cls_labels, indices))
-        loss_dict.update(self.loss_boxes(box_offset_preds, conf_preds, coords_float_query, box_labels, indices))
+        num_gt = 0 
+        for b in range(batch_size):
+            mask_logit_b = mask_logits_list[b]
+            cls_logit_b = cls_logits[b] # n_queries x n_classes
+
+            pred_inds, cls_label, inst_label = row_indices[b], cls_labels[b], inst_labels[b]
+
+            if mask_logit_b == None:
+                continue
+
+            if pred_inds is None:
+                continue
+
+            mask_logit_pred = mask_logit_b[pred_inds]
+
+            num_gt_batch = len(pred_inds)
+            num_gt += num_gt_batch
+             
+            loss_dict['dice_loss'] = loss_dict['dice_loss'] + compute_dice_loss(mask_logit_pred, inst_label, num_gt_batch)
+
+            # breakpoint()
+            loss_dict['focal_loss'] = loss_dict['dice_loss'] + compute_sigmoid_focal_loss(mask_logit_pred, inst_label, num_gt_batch)
+
+            # target_classes = torch.full(
+            #     (n_queries), self.instance_classes, dtype=torch.int64, device=cls_logits.device
+            # )
+
+            target_classes = torch.ones((n_queries), dtype=torch.int64, device=cls_logits.device) * self.instance_classes
+
+            target_classes[pred_inds] = cls_label
+
+            loss_dict['cls_loss'] = loss_dict['cls_loss'] + F.cross_entropy(
+                cls_logit_b,
+                target_classes,
+                self.empty_weight,
+                reduction="mean",
+            )
 
         for k, v in loss_dict.items():
-            loss += self.loss_weight[k] * v
+            loss = loss + self.loss_weight[k] * v
+        loss = loss / batch_size
 
         return loss
 
@@ -185,33 +269,38 @@ class Criterion(nn.Module):
                                                 instance_labels, pt_offset_labels, pt_offset_vertices_labels, coords_float)
             
             loss_dict.update(point_wise_loss)
+
         ''' Main loss '''
-        cls_preds = model_outputs["cls_preds"]
-        box_offset_preds = model_outputs["box_offset_preds"]
-        conf_preds = model_outputs["conf_preds"]
-        coords_float_query = model_outputs["coords_float_query"]
+        mask_logits_layers = model_outputs["mask_logits_layers"]
+        cls_logits_layers = model_outputs["cls_logits_layers"]
+
         batch_offsets_ = model_outputs["batch_offsets_"]
         object_idxs = model_outputs["object_idxs"]
 
         semantic_labels_ = semantic_labels[object_idxs]
         instance_labels_ = instance_labels[object_idxs]
-        coords_float_ = coords_float[object_idxs]
+        # coords_float_ = coords_float[object_idxs]
 
-        n_layers, batch_size = cls_preds.shape[0:2]
+        n_layers = len(cls_logits_layers) 
+        batch_size, n_queries = cls_logits_layers[-1].shape[:2]
 
-        match_indices, cls_labels, box_labels = self.matcher(cls_preds[-1], box_offset_preds[-1], conf_preds[-1], \
-                                                            coords_float_query, instance_cls, instance_box, instance_batch_offsets, instance_label_shift=self.label_shift)
-        if len(match_indices) < batch_size:
-            loss_dict['loss'] = 0.0 * cls_preds.sum()
-            return loss_dict
+        row_indices, cls_labels, inst_labels = self.matcher(cls_logits_layers[-1], mask_logits_layers[-1],\
+                                                            semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=self.label_shift)
+        
+        # breakpoint()
+        # if len(row_indices) < batch_size:
+        #     print('bug')
+        #     loss_dict['loss'] = torch.tensor(0.0, requires_grad=True, device=cls_logits_layers[-1].device, dtype=torch.float)
+        #     return loss_dict
+
         # NOTE main loss
-        main_loss = self.single_layer_loss(cls_preds[-1], box_offset_preds[-1], conf_preds[-1], coords_float_query, cls_labels, box_labels, match_indices)
+        main_loss = self.single_layer_loss(mask_logits_layers[-1], cls_logits_layers[-1], row_indices, cls_labels, inst_labels, batch_size, n_queries)
         loss_dict[f'loss_layer{n_layers-1}'] = main_loss
 
         ''' Auxilary loss '''
         for l in range(n_layers-1):
-            interm_loss = self.single_layer_loss(cls_preds[l], box_offset_preds[l], conf_preds[l], coords_float_query, cls_labels, box_labels, match_indices)
-            interm_loss = interm_loss * 0.5
+            interm_loss = self.single_layer_loss(mask_logits_layers[l], cls_logits_layers[l], row_indices, cls_labels, inst_labels, batch_size, n_queries)
+            # interm_loss = interm_loss * 0.5
 
             loss_dict[f'loss_layer{l}'] = interm_loss
             

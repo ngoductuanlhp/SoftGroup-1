@@ -5,12 +5,39 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 
 from ..ops import (ballquery_batch_p, bfs_cluster, get_mask_iou_on_cluster, get_mask_iou_on_pred,
                    get_mask_label, global_avg_pool, sec_max, sec_min, voxelization,
                    voxelization_idx)
 from ..util import cuda_cast, force_fp32, rle_encode
 from .blocks import MLP, ResidualBlock, UBlock, PositionalEmbedding
+
+
+def non_max_suppression_gpu(proposals_pred, scores, threshold):
+    proposals_pred = proposals_pred.float()  # (nProposal, N), float, cuda
+    intersection = torch.mm(proposals_pred, proposals_pred.t())  # (nProposal, nProposal), float, cuda
+    proposals_pointnum = proposals_pred.sum(1)  # (nProposal), float, cuda
+    proposals_pn_h = proposals_pointnum.unsqueeze(-1).repeat(1, proposals_pointnum.shape[0])
+    proposals_pn_v = proposals_pointnum.unsqueeze(0).repeat(proposals_pointnum.shape[0], 1)
+    ious = intersection / (proposals_pn_h + proposals_pn_v - intersection)
+    
+    ixs = torch.argsort(scores, descending=True)
+    
+    pick = []
+    while len(ixs) > 0:
+        i = ixs[0]
+        pick.append(i)
+        iou = ious[i, ixs[1:]]
+
+        remove_ixs = torch.nonzero(iou > threshold).view(-1) + 1
+
+        remove_ixs = torch.cat([remove_ixs, torch.tensor([0], device=remove_ixs.device)]).long()
+
+        mask = torch.ones_like(ixs, device=ixs.device, dtype=torch.bool)
+        mask[remove_ixs] = False
+        ixs = ixs[mask]
+    return torch.tensor(pick, dtype=torch.long, device=scores.device)
 
 def compute_dice_loss(inputs, targets):
     """
@@ -58,6 +85,33 @@ def sigmoid_focal_loss(inputs, targets, weights, alpha: float = 0.25, gamma: flo
 
     loss = (loss * weights).sum()
     return loss
+
+def compute_sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
+    """
+    Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example.
+        targets: A float tensor with the same shape as inputs. Stores the binary
+                 classification label for each element in inputs
+                (0 for the negative class and 1 for the positive class).
+        alpha: (optional) Weighting factor in range (0,1) to balance
+                positive vs negative examples. Default = -1 (no weighting).
+        gamma: Exponent of the modulating factor (1 - p_t) to
+               balance easy vs hard examples.
+    Returns:
+        Loss tensor
+    """
+    prob = inputs.sigmoid()
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+    p_t = prob * targets + (1 - prob) * (1 - targets)
+    loss = ce_loss * ((1 - p_t) ** gamma)
+
+    if alpha >= 0:
+        alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+        loss = alpha_t * loss
+
+    return loss.mean(1).sum() / (num_boxes + 1e-6)
 
 @torch.no_grad()
 def iou_aabb(pt_offsets_vertices, pt_offset_vertices_labels, coords):

@@ -6,6 +6,14 @@ model:
   sem2ins_classes: []
   semantic_only: False
   ignore_label: -100
+  transformer_cfg:
+    n_context_points: 2048
+    n_queries: 128
+    dec_dim: 64
+    dec_ffn_dim: 64
+    dec_nhead: 4
+    dec_nlayers: 4
+
   grouping_cfg:
     iou_thresh: 0.2
     score_thr: 0.2
@@ -60,17 +68,6 @@ data:
       max_npoint: 250000
       min_npoint: 5000
 
-  test2:
-    type: 'scannetv2'
-    data_root: 'dataset/scannetv2'
-    prefix: 'trainsmall'
-    suffix: '_inst_nostuff.pth'
-    training: False
-    voxel_cfg:
-      scale: 50
-      spatial_shape: [128, 512]
-      max_npoint: 250000
-      min_npoint: 5000
 
 dataloader:
   train:
@@ -93,7 +90,7 @@ save_cfg:
 
 fp16: True
 epochs: 40
-step_epoch: 20
+step_epoch: 15
 save_freq: 4
-pretrain: 'work_dirs/softgroup_scannet_bbox_context/softgroup_scannet_bbox_context_giouloss/best.pth'
+pretrain: 'work_dirs/softgroup_scannet_bbox_context_detr/detr_baseline/epoch_1.pth'
 work_dir: ''

@@ -40,7 +40,7 @@ class CustomDataset(Dataset):
             self.filenames = self.filenames[::10]
         self.logger.info(f'Load {self.mode} dataset: {len(self.filenames)} scans')
 
-        # self.filenames = self.filenames[:50]
+        # self.filenames = self.filenames[:10]
 
     def get_filenames(self):
         filenames = glob(osp.join(self.data_root, self.prefix, '*' + self.suffix))

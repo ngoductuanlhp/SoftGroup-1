@@ -142,12 +142,12 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
             logger.info('Evaluate instance segmentation')
             scannet_eval = ScanNetEval(val_set.CLASSES)
 
-            logger.info('Evaluate axis-align box prediction')
-            eval_res = scannet_eval.evaluate_box(all_pred_insts, all_gt_insts, coords)
+            # logger.info('Evaluate axis-align box prediction')
+            # eval_res = scannet_eval.evaluate_box(all_pred_insts, all_gt_insts, coords)
 
-
-            # eval_res = scannet_eval.evaluate(all_pred_insts, all_gt_insts)
-            # del all_pred_insts, all_gt_insts
+            eval_res = scannet_eval.evaluate(all_pred_insts, all_gt_insts)
+            del all_pred_insts, all_gt_insts
+            
             writer.add_scalar('val/AP', eval_res['all_ap'], epoch)
             writer.add_scalar('val/AP_50', eval_res['all_ap_50%'], epoch)
             writer.add_scalar('val/AP_25', eval_res['all_ap_25%'], epoch)

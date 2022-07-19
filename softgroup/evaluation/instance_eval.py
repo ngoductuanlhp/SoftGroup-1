@@ -147,6 +147,12 @@ class ScanNetEval(object):
                         score_arg_sort = np.argsort(y_score)
                         y_score_sorted = y_score[score_arg_sort]
                         y_true_sorted = y_true[score_arg_sort]
+
+                        if len(y_true_sorted) == 0:
+                            ap_current = 0.0
+                            rc_current = 0.0
+                            continue
+
                         y_true_sorted_cumsum = np.cumsum(y_true_sorted)
 
                         # unique thresholds
