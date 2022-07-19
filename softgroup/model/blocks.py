@@ -131,16 +131,27 @@ class UBlock(nn.Module):
     def forward(self, input):
 
         output = self.blocks(input)
+
+        if len(self.nPlanes) == 1:
+            return [output]
+
         identity = spconv.SparseConvTensor(output.features, output.indices, output.spatial_shape,
                                            output.batch_size)
-        if len(self.nPlanes) > 1:
-            output_decoder = self.conv(output)
-            output_decoder = self.u(output_decoder)
-            output_decoder = self.deconv(output_decoder)
-            out_feats = torch.cat((identity.features, output_decoder.features), dim=1)
-            output = output.replace_feature(out_feats)
-            output = self.blocks_tail(output)
-        return output
+        
+        output_decoder = self.conv(output)
+        output_decoder = self.u(output_decoder)
+
+        output_prelayer = output_decoder[-1]
+
+        output_deconv = self.deconv(output_prelayer)
+        out_feats = torch.cat((identity.features, output_deconv.features), dim=1)
+        output = output.replace_feature(out_feats)
+        output = self.blocks_tail(output)
+
+
+        output_decoder.append(output)
+        return output_decoder
+        # return output
 
 
 class PositionalEmbedding(nn.Module):

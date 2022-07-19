@@ -343,26 +343,26 @@ class ScanNetEval(object):
             else:
                 label_name = self.eval_class_labels[0]  # class agnostic label
             conf = pred['conf']
-            pred_mask = pred['pred_mask']
+            # pred_mask = pred['pred_mask']
             # pred_mask can be np.array or rle dict
-            if isinstance(pred_mask, dict):
-                pred_mask = rle_decode(pred_mask)
-            assert pred_mask.shape[0] == gts.shape[0]
+            # if isinstance(pred_mask, dict):
+            #     pred_mask = rle_decode(pred_mask)
+            # assert pred_mask.shape[0] == gts.shape[0]
 
             # convert to binary
-            pred_mask = np.not_equal(pred_mask, 0)
-            num = np.count_nonzero(pred_mask)
-            if num < self.min_region_sizes[0]:
-                continue  # skip if empty
+            # pred_mask = np.not_equal(pred_mask, 0)
+            # num = np.count_nonzero(pred_mask)
+            # if num < self.min_region_sizes[0]:
+            #     continue  # skip if empty
 
             pred_instance = {}
             pred_instance['filename'] = '{}_{}'.format(pred['scan_id'], num_pred_instances)  # dummy
             pred_instance['pred_id'] = num_pred_instances
             pred_instance['label_id'] = label_id if self.use_label else None
-            pred_instance['vert_count'] = num
+            # pred_instance['vert_count'] = num
             pred_instance['confidence'] = conf
-            pred_instance['void_intersection'] = np.count_nonzero(
-                np.logical_and(bool_void, pred_mask))
+            # pred_instance['void_intersection'] = np.count_nonzero(
+            #     np.logical_and(bool_void, pred_mask))
 
             if 'box' in pred.keys():
                 pred_box_min = pred['box'][:3]

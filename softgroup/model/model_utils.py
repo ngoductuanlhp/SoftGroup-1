@@ -110,6 +110,7 @@ def giou_aabb(pt_offsets_vertices, pt_offset_vertices_labels, coords):
     return iou, giou
 
 
+
 def cal_iou(volumes, x1, y1, z1, x2, y2, z2, sort_indices, index):
     rem_volumes = torch.index_select(volumes, dim=0, index=sort_indices)
 

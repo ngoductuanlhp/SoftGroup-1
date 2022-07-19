@@ -15,6 +15,9 @@ from munch import Munch
 from softgroup.data import build_dataloader, build_dataset
 from softgroup.evaluation import (ScanNetEval, evaluate_offset_mae, evaluate_semantic_acc,
                                   evaluate_semantic_miou, PointWiseEval)
+
+from softgroup.model.matcher import HungarianMatcher
+from softgroup.model.criterion import Criterion
 from softgroup.model import SoftGroup
 from softgroup.util import (AverageMeter, SummaryWriter, build_optimizer, checkpoint_save,
                             collect_results_gpu, cosine_lr_after_step, get_dist_info,
@@ -92,6 +95,7 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
     all_sem_preds, all_sem_labels, all_offset_preds, all_offset_labels = [], [], [], []
     all_inst_labels, all_pred_insts, all_gt_insts = [], [], []
     all_debug_accu = []
+    coords = []
 
     _, world_size = get_dist_info()
     progress_bar = tqdm(total=len(val_loader) * world_size, disable=not is_main_process())
@@ -118,6 +122,7 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
             if not cfg.model.semantic_only:
                 all_pred_insts.append(res['pred_instances'])
                 all_gt_insts.append(res['gt_instances'])
+                coords.append(res['coords_float'])
 
         global best_metric
 
@@ -136,17 +141,22 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
         else:
             logger.info('Evaluate instance segmentation')
             scannet_eval = ScanNetEval(val_set.CLASSES)
-            eval_res = scannet_eval.evaluate(all_pred_insts, all_gt_insts)
-            del all_pred_insts, all_gt_insts
+
+            logger.info('Evaluate axis-align box prediction')
+            eval_res = scannet_eval.evaluate_box(all_pred_insts, all_gt_insts, coords)
+
+
+            # eval_res = scannet_eval.evaluate(all_pred_insts, all_gt_insts)
+            # del all_pred_insts, all_gt_insts
             writer.add_scalar('val/AP', eval_res['all_ap'], epoch)
             writer.add_scalar('val/AP_50', eval_res['all_ap_50%'], epoch)
             writer.add_scalar('val/AP_25', eval_res['all_ap_25%'], epoch)
             logger.info('AP: {:.3f}. AP_50: {:.3f}. AP_25: {:.3f}'.format(
                 eval_res['all_ap'], eval_res['all_ap_50%'], eval_res['all_ap_25%']))
 
-            if len(all_debug_accu) > 0:
-                accu = np.mean(np.array(all_debug_accu))
-                logger.info('Mean accuracy of classification: {:.3f}'.format(accu))
+            # if len(all_debug_accu) > 0:
+            #     accu = np.mean(np.array(all_debug_accu))
+            #     logger.info('Mean accuracy of classification: {:.3f}'.format(accu))
 
             if best_metric < eval_res['all_ap_50%']:
                 best_metric = eval_res['all_ap_50%']
@@ -179,7 +189,9 @@ def main():
     writer = SummaryWriter(cfg.work_dir)
 
     # model
-    model = SoftGroup(**cfg.model).cuda()
+    matcher = HungarianMatcher()
+    criterion = Criterion(matcher, point_wise_loss='input_conv' not in cfg.model.fixed_modules)
+    model = SoftGroup(**cfg.model, criterion=criterion).cuda()
     
     total_params = 0
     trainable_params = 0
@@ -222,6 +234,9 @@ def main():
 
     global best_metric
     best_metric = 0
+
+    # validate(0, model, optimizer, val_loader, cfg, logger, writer)
+
     for epoch in range(start_epoch, cfg.epochs + 1):
         train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer)
         if not args.skip_validate and (is_multiple(epoch, cfg.save_freq) or is_power2(epoch)):

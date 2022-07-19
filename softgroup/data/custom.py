@@ -82,6 +82,7 @@ class CustomDataset(Dataset):
         pt_mean = np.ones((xyz.shape[0], 3), dtype=np.float32) * -100.0
         instance_pointnum = []
         instance_cls = []
+        instance_box = []
         instance_num = int(instance_label.max()) + 1
 
         pt_offset_vertices_label = np.ones((xyz.shape[0], 3*2), dtype=np.float32) * -100.0
@@ -116,13 +117,17 @@ class CustomDataset(Dataset):
             # pt_offset_vertices_label[inst_idx_i, 15:18] = max_x_i - xyz_i
             # pt_offset_vertices_label[inst_idx_i, 18:21] = max_y_i - xyz_i
             # pt_offset_vertices_label[inst_idx_i, 21:24] = max_z_i - xyz_i
+            
+            instance_box.append(np.concatenate([min_xyz_i, max_xyz_i], axis=0))
 
             instance_pointnum.append(inst_idx_i[0].size)
             cls_idx = inst_idx_i[0][0]
             instance_cls.append(semantic_label[cls_idx])
 
         pt_offset_label = pt_mean - xyz
-        return instance_num, instance_pointnum, instance_cls, pt_offset_label, pt_offset_vertices_label
+
+        instance_box = np.stack(instance_box, axis=0) # N, 6
+        return instance_num, instance_pointnum, instance_cls, instance_box, pt_offset_label, pt_offset_vertices_label
 
     def dataAugment(self, xyz, jitter=False, flip=False, rot=False, prob=1.0):
         m = np.eye(3)
@@ -210,7 +215,7 @@ class CustomDataset(Dataset):
             return None
         xyz, xyz_middle, rgb, semantic_label, instance_label = data
         info = self.getInstanceInfo(xyz_middle, instance_label.astype(np.int32), semantic_label)
-        inst_num, inst_pointnum, inst_cls, pt_offset_label, pt_offset_vertices_label = info
+        inst_num, inst_pointnum, inst_cls, inst_box, pt_offset_label, pt_offset_vertices_label = info
         coord = torch.from_numpy(xyz).long()
         coord_float = torch.from_numpy(xyz_middle)
         feat = torch.from_numpy(rgb).float()
@@ -220,8 +225,19 @@ class CustomDataset(Dataset):
         instance_label = torch.from_numpy(instance_label)
         pt_offset_label = torch.from_numpy(pt_offset_label)
         pt_offset_vertices_label = torch.from_numpy(pt_offset_vertices_label)
+
+        inst_box = torch.from_numpy(inst_box)
+
+        # NOTE debug
+
+        # inds = torch.nonzero(instance_label != -100).view(-1)
+        # sem_inds = semantic_label[inds]
+        # assert torch.all(torch.tensor(inst_cls) >= 0)
+        # assert torch.all(sem_inds >= 2)
+
+
         return (scan_id, coord, coord_float, feat, semantic_label, instance_label, inst_num,
-                inst_pointnum, inst_cls, pt_offset_label, pt_offset_vertices_label)
+                inst_pointnum, inst_cls, inst_box, pt_offset_label, pt_offset_vertices_label)
 
     def collate_fn(self, batch):
         scan_ids = []
@@ -233,8 +249,16 @@ class CustomDataset(Dataset):
 
         instance_pointnum = []  # (total_nInst), int
         instance_cls = []  # (total_nInst), long
+        instance_box = []
+        instance_batch_offsets = [0]
+
         pt_offset_labels = []
         pt_offset_vertices_labels = []
+
+        pc_mins = []
+        pc_maxs = []
+
+
 
         total_inst_num = 0
         batch_id = 0
@@ -242,7 +266,7 @@ class CustomDataset(Dataset):
             if data is None:
                 continue
             (scan_id, coord, coord_float, feat, semantic_label, instance_label, inst_num,
-             inst_pointnum, inst_cls, pt_offset_label, pt_offset_vertices_label) = data
+             inst_pointnum, inst_cls, inst_box, pt_offset_label, pt_offset_vertices_label) = data
             instance_label[np.where(instance_label != -100)] += total_inst_num
             total_inst_num += inst_num
             scan_ids.append(scan_id)
@@ -253,8 +277,14 @@ class CustomDataset(Dataset):
             instance_labels.append(instance_label)
             instance_pointnum.extend(inst_pointnum)
             instance_cls.extend(inst_cls)
+            instance_box.append(inst_box)
+            instance_batch_offsets.append(total_inst_num)
             pt_offset_labels.append(pt_offset_label)
             pt_offset_vertices_labels.append(pt_offset_vertices_label)
+
+            pc_mins.append(torch.min(coord_float, dim=0)[0])
+            pc_maxs.append(torch.max(coord_float, dim=0)[0])
+
             batch_id += 1
         assert batch_id > 0, 'empty batch'
         if batch_id < len(batch):
@@ -269,8 +299,15 @@ class CustomDataset(Dataset):
         instance_labels = torch.cat(instance_labels, 0).long()  # long (N)
         instance_pointnum = torch.tensor(instance_pointnum, dtype=torch.int)  # int (total_nInst)
         instance_cls = torch.tensor(instance_cls, dtype=torch.long)  # long (total_nInst)
+        instance_box = torch.cat(instance_box, dim=0).float() # (total_nInst, 6)
+        instance_batch_offsets = torch.tensor(instance_batch_offsets, dtype=torch.long)
         pt_offset_labels = torch.cat(pt_offset_labels).float()
         pt_offset_vertices_labels = torch.cat(pt_offset_vertices_labels).float()
+
+        pc_mins = torch.stack(pc_mins)
+        pc_maxs = torch.stack(pc_maxs) # batch, 3
+
+        pc_dims = torch.stack([pc_mins, pc_maxs], dim=0) # 2, batch, 3
 
         spatial_shape = np.clip(
             coords.max(0)[0][1:].numpy() + 1, self.voxel_cfg.spatial_shape[0], None)
@@ -282,14 +319,18 @@ class CustomDataset(Dataset):
             'voxel_coords': voxel_coords,
             'p2v_map': p2v_map,
             'v2p_map': v2p_map,
+            'coords': coords,
             'coords_float': coords_float,
             'feats': feats,
             'semantic_labels': semantic_labels,
             'instance_labels': instance_labels,
             'instance_pointnum': instance_pointnum,
             'instance_cls': instance_cls,
+            'instance_box': instance_box,
+            'instance_batch_offsets': instance_batch_offsets,
             'pt_offset_labels': pt_offset_labels,
             'pt_offset_vertices_labels': pt_offset_vertices_labels,
             'spatial_shape': spatial_shape,
             'batch_size': batch_id,
+            'pc_dims': pc_dims
         }
