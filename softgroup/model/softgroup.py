@@ -779,6 +779,8 @@ class SoftGroup(nn.Module):
         
         # NOTE only batch 1 when test
         b = 0
+
+        instances = []
         start   = batch_offsets[b]
         end     = batch_offsets[b+1]
         num_points = end - start
@@ -811,7 +813,7 @@ class SoftGroup(nn.Module):
         final_cond = cls_preds_cond & npoints_cond & mask_logit_scores_cond
 
         if torch.count_nonzero(final_cond) == 0:
-            return [], [], []
+            return instances
 
         cls_final = cls_logits_pred_b[final_cond]
         masks_final = mask_logit_b_bool[final_cond]
@@ -836,7 +838,7 @@ class SoftGroup(nn.Module):
         # scores_final = scores_final.cpu().numpy()
         # cls_final = cls_final.cpu().numpy()
 
-        instances = []
+        
         for i in range(cls_final.shape[0]):
             pred = {}
             pred['scan_id'] = scan_id

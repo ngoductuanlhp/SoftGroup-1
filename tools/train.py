@@ -120,6 +120,13 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
             # all_inst_labels.append(res['instance_labels'])
             point_eval.update(res['semantic_preds'], res['offset_preds'], res['semantic_labels'], res['offset_labels'], res['instance_labels'])
             if not cfg.model.semantic_only:
+
+                # for pred in res['pred_instances']:
+                #     label_id = pred['label_id']
+
+                    # print(label_id)
+                    # if isinstance(pred, list):
+                    #     breakpoint()
                 all_pred_insts.append(res['pred_instances'])
                 all_gt_insts.append(res['gt_instances'])
                 coords.append(res['coords_float'])
@@ -235,7 +242,7 @@ def main():
     global best_metric
     best_metric = 0
 
-    # validate(0, model, optimizer, val_loader, cfg, logger, writer)
+    validate(0, model, optimizer, val_loader, cfg, logger, writer)
 
     for epoch in range(start_epoch, cfg.epochs + 1):
         train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer)
