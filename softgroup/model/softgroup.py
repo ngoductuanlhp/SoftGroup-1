@@ -312,7 +312,7 @@ class SoftGroup(nn.Module):
 
             batch_idxs_ = batch_idxs[object_idxs]
             coords_float_ = coords_float[object_idxs]
-            # output_feats_ = output_feats[object_idxs]
+            output_feats_ = output_feats[object_idxs]
             # semantic_scores_ = semantic_scores[object_idxs]
             pt_offsets_ = pt_offsets[object_idxs]
             pt_offsets_vertices_ = pt_offsets_vertices[object_idxs]
@@ -325,8 +325,9 @@ class SoftGroup(nn.Module):
             # NOTE NMC
             box_conf_ = box_conf_ * semantic_scores_max[object_idxs]
             queries_mask, queries_inds, queries_feats, queries_coords = \
-                non_maximum_queries(box_conf_, coords_float_, pt_offsets_, pt_offsets_vertices_, semantic_scores_pred_, trans_features_, batch_offsets_)
+                non_maximum_queries(box_conf_, coords_float_, pt_offsets_, pt_offsets_vertices_, semantic_scores_pred_, output_feats_, batch_offsets_)
 
+            queries_feats = self.trans_linear(queries_feats.reshape(batch_size*64,-1)).reshape(batch_size, 64, -1)
             # breakpoint()
             context_inds = []
             for b in range(batch_size):
