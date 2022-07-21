@@ -244,8 +244,6 @@ def cal_giou(volumes, x1, y1, z1, x2, y2, z2, sort_indices, index):
 
     return IoU, gIoU
 
-
-@torch.no_grad()
 def non_maximum_queries(box_conf, coords, pt_offsets, pt_offsets_vertices, semantic_preds, trans_feats, batch_offsets, mean_active=100, iou_thresh=0.3, max_n_queries=64):
     # box_conf: N
     n_points = box_conf.shape[0]
@@ -267,9 +265,9 @@ def non_maximum_queries(box_conf, coords, pt_offsets, pt_offsets_vertices, seman
     for b in range(batch_size):
 
         proposals_conf = []
-        proposals_indices = []
+        # proposals_indices = []
         proposals_pivots = []
-        proposal_boxes = []
+        # proposal_boxes = []
         proposal_feats = []
         proposals_coords = []
 
@@ -309,13 +307,13 @@ def non_maximum_queries(box_conf, coords, pt_offsets, pt_offsets_vertices, seman
             if len_cluster > mean_active:
 
                 proposals_conf.append(box_conf[index+batch_start])
-                proposals_indices.append(cluster_indices)
+                # proposals_indices.append(cluster_indices)
                 proposals_pivots.append(index+batch_start)
 
                 proposal_feats.append(torch.mean(trans_feats[cluster_indices], dim=0))
 
-                box = torch.tensor([x1[index], y1[index], z1[index], x2[index], y2[index], z2[index]])
-                proposal_boxes.append(box)
+                # box = torch.tensor([x1[index], y1[index], z1[index], x2[index], y2[index], z2[index]])
+                # proposal_boxes.append(box)
 
                 proposals_coords.append(coords[index+batch_start])
 
