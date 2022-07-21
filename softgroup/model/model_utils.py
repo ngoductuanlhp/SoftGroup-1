@@ -246,7 +246,7 @@ def cal_giou(volumes, x1, y1, z1, x2, y2, z2, sort_indices, index):
 
 
 @torch.no_grad()
-def non_maximum_queries(box_conf, coords, pt_offsets, pt_offsets_vertices, batch_offsets, radius=6**2, mean_active=300, iou_thresh=0.3, n_queries=64):
+def non_maximum_queries(box_conf, coords, pt_offsets, pt_offsets_vertices, semantic_preds, trans_feats, batch_offsets, mean_active=100, iou_thresh=0.3, max_n_queries=64):
     # box_conf: N
     n_points = box_conf.shape[0]
     batch_size = len(batch_offsets) - 1
@@ -255,18 +255,24 @@ def non_maximum_queries(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
     coords_min = coords + pt_offsets_vertices[:, :3]
     coords_max = coords + pt_offsets_vertices[:, 3:]
 
-    # proposals_idx = []
-    # proposals_offset = [0]
-    proposals_conf = []
-    proposals_indices = []
-    proposal_boxes = []
 
     # cluster_id = 0
 
-    queries_mask = torch.zeros((batch_size, n_queries), dtype=torch.bool, device=coords.device)
-    queries_inds = torch.zeros((batch_size, n_queries), dtype=torch.long, device=coords.device)
+    queries_mask = torch.zeros((batch_size, max_n_queries), dtype=torch.bool, device=coords.device)
+    queries_inds = torch.zeros((batch_size, max_n_queries), dtype=torch.long, device=coords.device) - 1
+    queries_feats = torch.zeros((batch_size, max_n_queries, trans_feats.shape[-1]), dtype=torch.float, device=coords.device)
+    queries_coords = torch.zeros((batch_size, max_n_queries, coords.shape[-1]), dtype=torch.float, device=coords.device)
+
 
     for b in range(batch_size):
+
+        proposals_conf = []
+        proposals_indices = []
+        proposals_pivots = []
+        proposal_boxes = []
+        proposal_feats = []
+        proposals_coords = []
+
         batch_start = batch_offsets[b]
         batch_end = batch_offsets[b + 1]
 
@@ -287,9 +293,12 @@ def non_maximum_queries(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
             index = sort_indices[0]
             sort_indices = sort_indices[1:]
 
+            pitvot_semantic = semantic_preds[index+batch_start]
+            neighbor_semantic = semantic_preds[sort_indices+batch_start]
+
             IoU = cal_iou(volumes, x1, y1, z1, x2, y2, z2, sort_indices, index)
 
-            mask = (IoU >= iou_thresh)
+            mask = (IoU >= iou_thresh) & (pitvot_semantic == neighbor_semantic)
             neighbor_indices = torch.nonzero(mask).view(-1)
             final_neighbor_indices = sort_indices[neighbor_indices]
 
@@ -301,12 +310,27 @@ def non_maximum_queries(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
 
                 proposals_conf.append(box_conf[index+batch_start])
                 proposals_indices.append(cluster_indices)
+                proposals_pivots.append(index+batch_start)
+
+                proposal_feats.append(torch.mean(trans_feats[cluster_indices], dim=0))
 
                 box = torch.tensor([x1[index], y1[index], z1[index], x2[index], y2[index], z2[index]])
                 proposal_boxes.append(box)
 
+                proposals_coords.append(coords[index+batch_start])
+
 
             sort_indices = sort_indices[~mask]
+        
+        num_pivots = min(len(proposals_conf), max_n_queries)
+        queries_mask[b, :num_pivots] = True
+        queries_inds[b, :num_pivots] = torch.tensor(proposals_pivots[:num_pivots], dtype=torch.long, device=coords.shape)
+        queries_feats[b, :num_pivots] = torch.tensor(proposal_feats[:num_pivots], dtype=torch.float, device=coords.shape)
+        queries_coords[b, :num_pivots] = torch.tensor(proposals_coords[:num_pivots], dtype=torch.float, device=coords.shape)
+
+    return queries_mask, queries_inds, queries_feats, queries_coords
+
+    
 
 @torch.no_grad()
 def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch_offsets, radius=6**2, mean_active=300, iou_thresh=0.3):

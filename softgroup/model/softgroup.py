@@ -11,7 +11,7 @@ from ..ops import (ballquery_batch_p, ballquery_batch_p_boxiou, bfs_cluster, get
                    voxelization_idx)
 from ..util import cuda_cast, force_fp32, rle_encode
 from .blocks import MLP, ResidualBlock, UBlock, PositionalEmbedding, conv_with_kaiming_uniform
-from .model_utils import giou_aabb, iou_aabb, compute_dice_loss, sigmoid_focal_loss, non_maximum_cluster, non_maximum_cluster2, non_max_suppression_gpu
+from .model_utils import giou_aabb, iou_aabb, compute_dice_loss, sigmoid_focal_loss, non_maximum_cluster, non_maximum_cluster2, non_max_suppression_gpu, non_maximum_queries
 # from ..pointnet2 import pointnet2_utils
 from softgroup.pointnet2.pointnet2_utils import furthest_point_sample
 
@@ -97,21 +97,25 @@ class SoftGroup(nn.Module):
         #     self.mask_linear = MLP(channels, instance_classes + 1, norm_fn=None, num_layers=2)
         #     self.iou_score_linear = nn.Linear(channels, instance_classes + 1)
 
+        # NOTE trans feats
+        self.trans_channels = 2 * channels
+        self.trans_linear = MLP(channels, self.trans_channels, norm_fn=norm_fn, num_layers=3)
+
         # NOTE dyco
         self.init_dyco()
 
         # NOTE transformer decoder
 
         ''' Set aggregate '''
-        set_aggregate_dim_out = 2 * self.channels
-        mlp_dims = [self.channels, 2*self.channels, 2*self.channels, set_aggregate_dim_out]
-        self.set_aggregator = PointnetSAModuleVotesSeparate(
-            radius=0.2,
-            nsample=64,
-            npoint=transformer_cfg.n_context_points,
-            mlp=mlp_dims,
-            normalize_xyz=True,
-        )
+        # set_aggregate_dim_out = 2 * self.channels
+        # mlp_dims = [self.channels, 2*self.channels, 2*self.channels, set_aggregate_dim_out]
+        # self.set_aggregator = PointnetSAModuleVotesSeparate(
+        #     radius=0.2,
+        #     nsample=64,
+        #     npoint=transformer_cfg.n_context_points,
+        #     mlp=mlp_dims,
+        #     normalize_xyz=True,
+        # )
 
         ''' Position embedding '''
         self.pos_embedding = PositionEmbeddingCoordsSine(
@@ -127,17 +131,17 @@ class SoftGroup(nn.Module):
             hidden_use_bias=True,
         )
 
-        self.encoder_to_decoder_projection = GenericMLP(
-            input_dim=set_aggregate_dim_out,
-            hidden_dims=[set_aggregate_dim_out],
-            output_dim=transformer_cfg.dec_dim,
-            norm_fn_name="bn1d",
-            activation="relu",
-            use_conv=True,
-            output_use_activation=True,
-            output_use_norm=True,
-            output_use_bias=False,
-        )
+        # self.encoder_to_decoder_projection = GenericMLP(
+        #     input_dim=self.trans_channels,
+        #     hidden_dims=[self.trans_channels],
+        #     output_dim=transformer_cfg.dec_dim,
+        #     norm_fn_name="bn1d",
+        #     activation="relu",
+        #     use_conv=True,
+        #     output_use_activation=True,
+        #     output_use_norm=True,
+        #     output_use_bias=False,
+        # )
 
         self.detr_sem_head = GenericMLP(
             input_dim=transformer_cfg.dec_dim,
@@ -146,6 +150,15 @@ class SoftGroup(nn.Module):
             activation="relu",
             use_conv=True,
             output_dim=self.instance_classes+1
+        )
+
+        self.detr_conf_head = GenericMLP(
+            input_dim=transformer_cfg.dec_dim,
+            hidden_dims=[transformer_cfg.dec_dim, transformer_cfg.dec_dim],
+            norm_fn_name="bn1d",
+            activation="relu",
+            use_conv=True,
+            output_dim=1
         )
 
         ''' DETR-Decoder '''
@@ -290,6 +303,7 @@ class SoftGroup(nn.Module):
             #                         n_points=n_points) # batch, n_points
 
             mask_features  = self.mask_tower(torch.unsqueeze(output_feats, dim=2).permute(2,1,0)).permute(2,1,0)
+            trans_features = self.trans_linear(output_feats)
 
             semantic_scores_max, semantic_scores_pred = torch.max(semantic_scores, dim=1) # N_points
 
@@ -304,31 +318,54 @@ class SoftGroup(nn.Module):
             pt_offsets_vertices_ = pt_offsets_vertices[object_idxs]
             mask_features_ = mask_features[object_idxs]
             box_conf_ = box_conf[object_idxs]
+            semantic_scores_pred_ = semantic_scores_pred[object_idxs]
+            trans_features_ = trans_features[object_idxs]
             batch_offsets_ = self.get_batch_offsets(batch_idxs_, batch_size)
 
             # NOTE NMC
             box_conf_ = box_conf_ * semantic_scores_max[object_idxs]
-            proposals_idx, proposals_offset, proposals_box, proposals_conf = \
-                non_maximum_cluster(box_conf_, coords_float_, pt_offsets_, pt_offsets_vertices_, batch_offsets_, mean_active=self.grouping_cfg.mean_active_nmc, iou_thresh=self.grouping_cfg.iou_thresh)
+            queries_mask, queries_inds, queries_feats, queries_coords = \
+                non_maximum_queries(box_conf_, coords_float_, pt_offsets_, pt_offsets_vertices_, semantic_scores_pred_, trans_features_, batch_offsets_)
 
+            context_inds = []
+            for b in range(batch_size):
+                start, end = batch_offsets_[b], batch_offsets_[b+1]
+                coords_float_b = coords_float_[start:end].unsqueeze(0)
+                inds_b = furthest_point_sample(coords_float_b, 4096) + start # 1 x n_points 
+                context_inds.append(inds_b)
+            context_inds = torch.cat(context_inds, dim=0).long() # batch x n_points
+            # context_inds = object_idxs[context_inds]
 
+            context_feats = trans_features_[context_inds.flatten()].reshape(batch_size, 4096, -1)
+            context_coords = trans_features_[context_inds.flatten()].reshape(batch_size, 4096, -1)
 
-            contexts = self.forward_aggregator(coords_float_, output_feats_, batch_offsets_, batch_size, pre_enc_inds=None)
-            context_locs, context_feats, pre_enc_inds = contexts
+            # contexts = self.forward_aggregator(coords_float_, output_feats_, batch_offsets_, batch_size, pre_enc_inds=None)
+            # context_locs, context_feats, pre_enc_inds = contexts
 
-            # NOTE get queries
-            query_locs = context_locs[:, :self.transformer_cfg.n_queries, :]
 
             # NOTE transformer decoder
-            dec_outputs = self.forward_decoder(context_locs, context_feats, query_locs, pc_dims)
+            dec_outputs = self.forward_decoder(context_coords, context_feats, queries_coords, queries_feats, queries_mask, pc_dims)
 
+            # NOTE subsampling when training
 
-            cls_logits_layers, mask_logits_layers = self.forward_head(dec_outputs, mask_features_, coords_float_, query_locs, batch_offsets_)
+            object_idxs_subsample = []
+            for b in range(batch_size):
+                start, end = batch_offsets_[b], batch_offsets_[b+1]
+                num_points_b = end - start
+                new_inds = torch.tensor(np.random.choice((end-start), 20000, replace=num_points_b<20000), dtype=torch.long, device=coords_float.device) + start
+                object_idxs_subsample.append(new_inds)
+            object_idxs_subsample = torch.cat(object_idxs_subsample) # N_subsample: batch x 20000
+
+            mask_features_subsample = mask_features_[object_idxs_subsample]
+            coords_float_subsample = coords_float_[object_idxs_subsample]
+            batch_offsets_subsample = batch_offsets_[object_idxs_subsample]
+
+            cls_logits_layers, mask_logits_layers = self.forward_head(dec_outputs, mask_features_subsample, coords_float_subsample, queries_coords, batch_offsets_subsample)
 
 
             model_outputs.update(dict(
-                object_idxs=object_idxs,
-                batch_offsets_=batch_offsets_,
+                object_idxs=object_idxs[object_idxs_subsample],
+                batch_offsets_=batch_offsets_subsample,
                 semantic_scores=semantic_scores,
                 pt_offsets=pt_offsets, 
                 pt_offsets_vertices=pt_offsets_vertices, 
@@ -628,9 +665,10 @@ class SoftGroup(nn.Module):
 
         return coords_float_context_arr, output_feats_context_arr, coords_float_query, output_feats_query
 
-    def forward_decoder(self, context_locs, context_feats, query_locs, pc_dims):
+    def forward_decoder(self, context_coords, context_feats, queries_coords, queries_feats, queries_mask, pc_dims):
         # batch_size = context_locs.shape[0]
-        batch_size, n_queries = query_locs.shape[:2]
+        # queries_feats: batch, npoints, channel
+        batch_size, n_queries = queries_coords.shape[:2]
 
         input_range = [
             pc_dims[1], # max
@@ -638,24 +676,24 @@ class SoftGroup(nn.Module):
         ]
 
 
-        context_embedding_pos = self.pos_embedding(context_locs, input_range=pc_dims)
-        context_feats = self.encoder_to_decoder_projection(
-            context_feats.permute(0, 2, 1)
-        ) # batch x channel x npoints
+        context_embedding_pos = self.pos_embedding(context_coords, input_range=pc_dims)
+        # context_feats = self.encoder_to_decoder_projection(
+        #     context_feats.permute(0, 2, 1)
+        # ) # batch x channel x npoints
 
         ''' Init dec_inputs by query features '''
-        query_embedding_pos = self.pos_embedding(query_locs, input_range=input_range)
+        query_embedding_pos = self.pos_embedding(queries_coords, input_range=input_range)
         query_embedding_pos = self.query_projection(query_embedding_pos.float())
 
-        dec_inputs      = context_feats[:,:,:n_queries].permute(2, 0, 1)
 
         # decoder expects: npoints x batch x channel
         context_embedding_pos   = context_embedding_pos.permute(2, 0, 1)
         query_embedding_pos     = query_embedding_pos.permute(2, 0, 1)
-        context_feats           = context_feats.permute(2, 0, 1)
+        context_feats           = context_feats.permute(1, 0, 2)
+        dec_inputs              = queries_feats.permute(1, 0, 2)
 
         # Encode relative pos
-        relative_coords = torch.abs(query_locs[:,:,None,:] - context_locs[:,None,:,:])   # b x n_queries x n_contexts x 3
+        relative_coords = torch.abs(queries_coords[:,:,None,:] - context_coords[:,None,:,:])   # b x n_queries x n_contexts x 3
         n_queries, n_contexts = relative_coords.shape[1], relative_coords.shape[2]
 
         relative_embedding_pos = self.pos_embedding(relative_coords.reshape(batch_size, n_queries*n_contexts, -1), input_range=input_range).reshape(batch_size, -1, n_queries, n_contexts,)

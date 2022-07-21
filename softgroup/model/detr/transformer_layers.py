@@ -85,12 +85,13 @@ class TransformerDecoder(nn.Module):
         intermediate = []
         # attns = []
 
-        for layer in self.layers:
-            output, attn = layer(output, memory, tgt_mask=tgt_mask,
-                           memory_mask=memory_mask,
-                           tgt_key_padding_mask=tgt_key_padding_mask,
-                           memory_key_padding_mask=memory_key_padding_mask,
-                           pos=pos, query_pos=query_pos, relative_pos=relative_pos,
+        n_points = [1024, 1024, 2048, 2048, 4096, 4096]
+        for l, layer in enumerate(self.layers):
+            memory_ = memory[:n_points[l], ...]
+            pos_ = pos[:n_points[l], ...]
+            relative_pos_ = relative_pos[:, :n_points[l], :, :]
+            output, attn = layer(output, memory_,
+                           pos=pos_, query_pos=query_pos, relative_pos=relative_pos_,
                            return_attn_weights=return_attn_weights)
             if self.return_intermediate:
                 intermediate.append(self.norm(output))
