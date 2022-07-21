@@ -312,8 +312,8 @@ class SoftGroup(nn.Module):
 
             batch_idxs_ = batch_idxs[object_idxs]
             coords_float_ = coords_float[object_idxs]
-            output_feats_ = output_feats[object_idxs]
-            semantic_scores_ = semantic_scores[object_idxs]
+            # output_feats_ = output_feats[object_idxs]
+            # semantic_scores_ = semantic_scores[object_idxs]
             pt_offsets_ = pt_offsets[object_idxs]
             pt_offsets_vertices_ = pt_offsets_vertices[object_idxs]
             mask_features_ = mask_features[object_idxs]
@@ -327,22 +327,23 @@ class SoftGroup(nn.Module):
             queries_mask, queries_inds, queries_feats, queries_coords = \
                 non_maximum_queries(box_conf_, coords_float_, pt_offsets_, pt_offsets_vertices_, semantic_scores_pred_, trans_features_, batch_offsets_)
 
+            # breakpoint()
             context_inds = []
             for b in range(batch_size):
                 start, end = batch_offsets_[b], batch_offsets_[b+1]
                 coords_float_b = coords_float_[start:end].unsqueeze(0)
-                inds_b = furthest_point_sample(coords_float_b, 4096) + start # 1 x n_points 
+                inds_b = furthest_point_sample(coords_float_b, self.transformer_cfg.n_context_points) + start # 1 x n_points 
                 context_inds.append(inds_b)
             context_inds = torch.cat(context_inds, dim=0).long() # batch x n_points
             # context_inds = object_idxs[context_inds]
 
-            context_feats = trans_features_[context_inds.flatten()].reshape(batch_size, 4096, -1)
-            context_coords = trans_features_[context_inds.flatten()].reshape(batch_size, 4096, -1)
+            context_feats = trans_features_[context_inds.flatten()].reshape(batch_size, self.transformer_cfg.n_context_points, -1)
+            context_coords = coords_float_[context_inds.flatten()].reshape(batch_size, self.transformer_cfg.n_context_points, -1)
 
             # contexts = self.forward_aggregator(coords_float_, output_feats_, batch_offsets_, batch_size, pre_enc_inds=None)
             # context_locs, context_feats, pre_enc_inds = contexts
 
-
+            # breakpoint()
             # NOTE transformer decoder
             dec_outputs = self.forward_decoder(context_coords, context_feats, queries_coords, queries_feats, queries_mask, pc_dims)
 
@@ -351,14 +352,14 @@ class SoftGroup(nn.Module):
             object_idxs_subsample = []
             for b in range(batch_size):
                 start, end = batch_offsets_[b], batch_offsets_[b+1]
-                num_points_b = end - start
-                new_inds = torch.tensor(np.random.choice((end-start), 20000, replace=num_points_b<20000), dtype=torch.long, device=coords_float.device) + start
+                num_points_b = (end - start).cpu()
+                new_inds = torch.tensor(np.random.choice(num_points_b, self.transformer_cfg.n_subsample, replace=num_points_b<self.transformer_cfg.n_subsample), dtype=torch.long, device=coords_float.device) + start
                 object_idxs_subsample.append(new_inds)
             object_idxs_subsample = torch.cat(object_idxs_subsample) # N_subsample: batch x 20000
 
             mask_features_subsample = mask_features_[object_idxs_subsample]
             coords_float_subsample = coords_float_[object_idxs_subsample]
-            batch_offsets_subsample = batch_offsets_[object_idxs_subsample]
+            batch_offsets_subsample =  self.get_batch_offsets(batch_idxs_[object_idxs_subsample], batch_size)
 
             cls_logits_layers, mask_logits_layers = self.forward_head(dec_outputs, mask_features_subsample, coords_float_subsample, queries_coords, batch_offsets_subsample)
 
@@ -372,6 +373,8 @@ class SoftGroup(nn.Module):
                 box_conf=box_conf,
                 cls_logits_layers=cls_logits_layers,
                 mask_logits_layers=mask_logits_layers,
+                queries_inds=queries_inds,
+                queries_mask=queries_mask
             ))
 
 
@@ -492,19 +495,11 @@ class SoftGroup(nn.Module):
             instance_labels=instance_labels.cpu().numpy())
         if not self.semantic_only:
             
+            batch_offsets = self.get_batch_offsets(batch_idxs, batch_size)
             mask_features  = self.mask_tower(torch.unsqueeze(output_feats, dim=2).permute(2,1,0)).permute(2,1,0)
+            trans_features = self.trans_linear(output_feats)
 
             semantic_scores_max, semantic_scores_pred = torch.max(semantic_scores, dim=1) # N_points
-
-            # object_idxs = []
-            # batch_offsets = self.get_batch_offsets(batch_idxs, batch_size)
-            # for b in range(batch_size):
-            #     start, end = batch_offsets[b], batch_offsets[b+1]
-
-            #     semantic_scores_pred_b = semantic_scores_pred[start:end]
-            #     cond_inds = torch.nonzero(semantic_scores_pred_b >= 2).view(-1) + start
-            #     object_idxs.append(cond_inds)
-            # object_idxs = torch.cat(object_idxs)
 
             object_conditions = (semantic_scores_pred >= 2)
             object_idxs = torch.nonzero(object_conditions).view(-1)
@@ -513,27 +508,42 @@ class SoftGroup(nn.Module):
             coords_float_ = coords_float[object_idxs]
             output_feats_ = output_feats[object_idxs]
             semantic_scores_ = semantic_scores[object_idxs]
+            pt_offsets_ = pt_offsets[object_idxs]
+            pt_offsets_vertices_ = pt_offsets_vertices[object_idxs]
             mask_features_ = mask_features[object_idxs]
             box_conf_ = box_conf[object_idxs]
+            semantic_scores_pred_ = semantic_scores_pred[object_idxs]
+            trans_features_ = trans_features[object_idxs]
             batch_offsets_ = self.get_batch_offsets(batch_idxs_, batch_size)
 
             # NOTE NMC
             box_conf_ = box_conf_ * semantic_scores_max[object_idxs]
-            proposals_idx, proposals_offset, proposals_box, proposals_conf = non_maximum_cluster(box_conf_, coords_, pt_offsets_, pt_offsets_vertices_, batch_offsets_, mean_active=self.grouping_cfg.mean_active_nmc, iou_thresh=self.grouping_cfg.iou_thresh)
+            queries_mask, queries_inds, queries_feats, queries_coords = \
+                non_maximum_queries(box_conf_, coords_float_, pt_offsets_, pt_offsets_vertices_, semantic_scores_pred_, trans_features_, batch_offsets_)
 
+            context_inds = []
+            for b in range(batch_size):
+                start, end = batch_offsets_[b], batch_offsets_[b+1]
+                coords_float_b = coords_float_[start:end].unsqueeze(0)
+                inds_b = furthest_point_sample(coords_float_b, self.transformer_cfg.n_context_points) + start # 1 x n_points 
+                context_inds.append(inds_b)
+            context_inds = torch.cat(context_inds, dim=0).long() # batch x n_points
+            # context_inds = object_idxs[context_inds]
 
+            context_feats = trans_features_[context_inds.flatten()].reshape(batch_size, self.transformer_cfg.n_context_points, -1)
+            context_coords = coords_float_[context_inds.flatten()].reshape(batch_size, self.transformer_cfg.n_context_points, -1)
 
-            contexts = self.forward_aggregator(coords_float_, output_feats_, batch_offsets_, batch_size, pre_enc_inds=None)
-            context_locs, context_feats, pre_enc_inds = contexts
+            # contexts = self.forward_aggregator(coords_float_, output_feats_, batch_offsets_, batch_size, pre_enc_inds=None)
+            # context_locs, context_feats, pre_enc_inds = contexts
 
-            # NOTE get queries
-            query_locs = context_locs[:, :self.transformer_cfg.n_queries, :]
 
             # NOTE transformer decoder
-            dec_outputs = self.forward_decoder(context_locs, context_feats, query_locs, pc_dims)
+            dec_outputs = self.forward_decoder(context_coords, context_feats, queries_coords, queries_feats, queries_mask, pc_dims)
 
 
-            cls_logits_layers, mask_logits_layers = self.forward_head(dec_outputs, mask_features_, coords_float_, query_locs, batch_offsets_)
+            cls_logits_layers, mask_logits_layers = self.forward_head(dec_outputs, mask_features_, coords_float_, queries_coords, batch_offsets_)
+
+
 
 
             pred_instances = self.get_instance(scan_ids[0], mask_logits_layers[-1], cls_logits_layers[-1], object_idxs, batch_offsets, batch_offsets_, semantic_scores_,\

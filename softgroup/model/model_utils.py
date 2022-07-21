@@ -324,9 +324,9 @@ def non_maximum_queries(box_conf, coords, pt_offsets, pt_offsets_vertices, seman
         
         num_pivots = min(len(proposals_conf), max_n_queries)
         queries_mask[b, :num_pivots] = True
-        queries_inds[b, :num_pivots] = torch.tensor(proposals_pivots[:num_pivots], dtype=torch.long, device=coords.shape)
-        queries_feats[b, :num_pivots] = torch.tensor(proposal_feats[:num_pivots], dtype=torch.float, device=coords.shape)
-        queries_coords[b, :num_pivots] = torch.tensor(proposals_coords[:num_pivots], dtype=torch.float, device=coords.shape)
+        queries_inds[b, :num_pivots] = torch.tensor(proposals_pivots[:num_pivots], dtype=torch.long, device=coords.device)
+        queries_feats[b, :num_pivots] = torch.stack(proposal_feats[:num_pivots]).float()
+        queries_coords[b, :num_pivots] = torch.stack(proposals_coords[:num_pivots]).float()
 
     return queries_mask, queries_inds, queries_feats, queries_coords
 

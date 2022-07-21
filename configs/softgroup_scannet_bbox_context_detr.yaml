@@ -7,12 +7,13 @@ model:
   semantic_only: False
   ignore_label: -100
   transformer_cfg:
-    n_context_points: 2048
-    n_queries: 128
+    n_context_points: 4096
+    n_queries: 96
     dec_dim: 64
-    dec_ffn_dim: 64
-    dec_nhead: 4
-    dec_nlayers: 4
+    dec_ffn_dim: 256
+    dec_nhead: 8
+    dec_nlayers: 6
+    n_subsample: 24000
 
   grouping_cfg:
     iou_thresh: 0.2
@@ -71,8 +72,8 @@ data:
 
 dataloader:
   train:
-    batch_size: 6
-    num_workers: 6
+    batch_size: 10
+    num_workers: 2
   test:
     batch_size: 1
     num_workers: 1
@@ -92,5 +93,5 @@ fp16: True
 epochs: 40
 step_epoch: 15
 save_freq: 4
-pretrain: 'work_dirs/softgroup_scannet_bbox_context_detr/detr_baseline/latest.pth'
+pretrain: 'work_dirs/softgroup_scannet_bbox_context_detr/detr_hiear_112233/epoch_2.pth'
 work_dir: ''

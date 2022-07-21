@@ -14,7 +14,7 @@ Modules to compute the matching cost and solve the corresponding LSAP.
 import torch
 from scipy.optimize import linear_sum_assignment
 from torch import nn
-
+import numpy as np
 # from util.box_ops import box_cxcywh_to_xyxy, generalized_box_iou, generalized_box_cdist
 import functools
 
@@ -93,7 +93,7 @@ class HungarianMatcher(nn.Module):
         assert cost_class != 0 or cost_bbox != 0 or cost_giou != 0, "all costs cant be 0"
     
     @torch.no_grad()
-    def forward(self, cls_preds, mask_logits_preds, semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=2):
+    def forward(self, cls_preds, mask_logits_preds, semantic_labels_, instance_labels_, batch_offsets_, queries_mask, instance_label_shift=2):
         # cls_preds : batch x classes x n_queries
         batch_size, n_queries, _ = cls_preds.shape
 
@@ -106,6 +106,7 @@ class HungarianMatcher(nn.Module):
 
             cls_preds_b = cls_preds[b] # n_queries, n_classes
             mask_logits_preds_b = mask_logits_preds[b]
+            queries_mask_b = queries_mask[b]
 
             instance_labels_b = instance_labels_[start:end]
             semantic_labels_b = semantic_labels_[start:end]
@@ -160,11 +161,23 @@ class HungarianMatcher(nn.Module):
             class_cost = -cls_preds_b_sm[:, cls_labels_b]
 
             final_cost = 1 * class_cost + 1 * dice_cost
+
+
+            # NOTE mask cost of invalid queries to + inf
+            final_cost[queries_mask_b == 0] = +1000000
             
-            final_cost = final_cost.detach().cpu().numpy()
+            final_cost = final_cost.detach().cpu().numpy() # n_queries x n_inst_gt
 
 
             row_inds, col_inds = linear_sum_assignment(final_cost)
+
+            row_inds = torch.from_numpy(row_inds).to(cls_preds.device)
+            col_inds = torch.from_numpy(col_inds).to(cls_preds.device)
+
+            # NOTE check valid
+            valid_row_inds = queries_mask_b[row_inds].bool()
+            row_inds = row_inds[valid_row_inds]
+            col_inds = col_inds[valid_row_inds]
 
             row_indices.append(row_inds)
             inst_labels.append(mask_labels_b[col_inds])

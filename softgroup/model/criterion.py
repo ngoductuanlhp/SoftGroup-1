@@ -191,7 +191,7 @@ class Criterion(nn.Module):
         
         
 
-    def single_layer_loss(self, mask_logits_list, cls_logits, row_indices, cls_labels, inst_labels, batch_size, n_queries):
+    def single_layer_loss(self, mask_logits_list, cls_logits, queries_mask, row_indices, cls_labels, inst_labels, batch_size, n_queries):
         loss = torch.tensor(0.0, requires_grad=True, device=cls_logits.device, dtype=torch.float)
         # loss = 0.0
         loss_dict = {}
@@ -204,6 +204,7 @@ class Criterion(nn.Module):
         for b in range(batch_size):
             mask_logit_b = mask_logits_list[b]
             cls_logit_b = cls_logits[b] # n_queries x n_classes
+            queries_mask_b = queries_mask[b] # n_queries
 
             pred_inds, cls_label, inst_label = row_indices[b], cls_labels[b], inst_labels[b]
 
@@ -232,8 +233,8 @@ class Criterion(nn.Module):
             target_classes[pred_inds] = cls_label
 
             loss_dict['cls_loss'] = loss_dict['cls_loss'] + F.cross_entropy(
-                cls_logit_b,
-                target_classes,
+                cls_logit_b[queries_mask_b==1],
+                target_classes[queries_mask_b==1],
                 self.empty_weight,
                 reduction="mean",
             )
@@ -259,9 +260,9 @@ class Criterion(nn.Module):
         pt_offset_labels = batch_inputs['pt_offset_labels']
         pt_offset_vertices_labels = batch_inputs['pt_offset_vertices_labels']
         coords_float = batch_inputs['coords_float']
-        instance_cls = batch_inputs['instance_cls']
-        instance_box = batch_inputs['instance_box']
-        instance_batch_offsets = batch_inputs['instance_batch_offsets']
+        # instance_cls = batch_inputs['instance_cls']
+        # instance_box = batch_inputs['instance_box']
+        # instance_batch_offsets = batch_inputs['instance_batch_offsets']
 
         if self.point_wise_loss:
 
@@ -277,6 +278,8 @@ class Criterion(nn.Module):
         batch_offsets_ = model_outputs["batch_offsets_"]
         object_idxs = model_outputs["object_idxs"]
 
+        queries_mask = model_outputs['queries_mask']
+
         semantic_labels_ = semantic_labels[object_idxs]
         instance_labels_ = instance_labels[object_idxs]
         # coords_float_ = coords_float[object_idxs]
@@ -285,7 +288,7 @@ class Criterion(nn.Module):
         batch_size, n_queries = cls_logits_layers[-1].shape[:2]
 
         row_indices, cls_labels, inst_labels = self.matcher(cls_logits_layers[-1], mask_logits_layers[-1],\
-                                                            semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=self.label_shift)
+                                                            semantic_labels_, instance_labels_, batch_offsets_, queries_mask, instance_label_shift=self.label_shift)
         
         # breakpoint()
         # if len(row_indices) < batch_size:
@@ -294,12 +297,12 @@ class Criterion(nn.Module):
         #     return loss_dict
 
         # NOTE main loss
-        main_loss = self.single_layer_loss(mask_logits_layers[-1], cls_logits_layers[-1], row_indices, cls_labels, inst_labels, batch_size, n_queries)
+        main_loss = self.single_layer_loss(mask_logits_layers[-1], cls_logits_layers[-1], queries_mask, row_indices, cls_labels, inst_labels, batch_size, n_queries)
         loss_dict[f'loss_layer{n_layers-1}'] = main_loss
 
         ''' Auxilary loss '''
         for l in range(n_layers-1):
-            interm_loss = self.single_layer_loss(mask_logits_layers[l], cls_logits_layers[l], row_indices, cls_labels, inst_labels, batch_size, n_queries)
+            interm_loss = self.single_layer_loss(mask_logits_layers[l], cls_logits_layers[l], queries_mask, row_indices, cls_labels, inst_labels, batch_size, n_queries)
             # interm_loss = interm_loss * 0.5
 
             loss_dict[f'loss_layer{l}'] = interm_loss
