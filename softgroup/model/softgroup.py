@@ -291,39 +291,25 @@ class SoftGroup(nn.Module):
 
             mask_features  = self.mask_tower(torch.unsqueeze(output_feats, dim=2).permute(2,1,0)).permute(2,1,0)
 
-            semantic_scores_pred = torch.argmax(semantic_scores, dim=1) # N_points
+            semantic_scores_max, semantic_scores_pred = torch.max(semantic_scores, dim=1) # N_points
 
-            object_idxs = []
-
-
-            batch_offsets = self.get_batch_offsets(batch_idxs, batch_size)
-            for b in range(batch_size):
-                start, end = batch_offsets[b], batch_offsets[b+1]
-
-                semantic_scores_pred_b = semantic_scores_pred[start:end]
-                cond_inds = torch.nonzero(semantic_scores_pred_b >= 2).view(-1) + start
-
-                if len(cond_inds) > 30000:
-                    # coords_temp = coords_float[cond_inds].unsqueeze(0)
-                    # new_inds = furthest_point_sample(coords_temp, 12000).long().squeeze(0)
-
-                    new_inds = torch.tensor(np.random.choice(len(cond_inds), 30000, replace=False), dtype=torch.long, device=coords_float.device)
-
-                    cond_inds = cond_inds[new_inds]
-                
-                object_idxs.append(cond_inds)
-            object_idxs = torch.cat(object_idxs)
-
-            # object_conditions = (semantic_scores_pred >= 2)
-            # object_idxs = torch.nonzero(object_conditions).view(-1)
+            object_conditions = (semantic_scores_pred >= 2)
+            object_idxs = torch.nonzero(object_conditions).view(-1)
 
             batch_idxs_ = batch_idxs[object_idxs]
             coords_float_ = coords_float[object_idxs]
             output_feats_ = output_feats[object_idxs]
             semantic_scores_ = semantic_scores[object_idxs]
+            pt_offsets_ = pt_offsets[object_idxs]
+            pt_offsets_vertices_ = pt_offsets_vertices[object_idxs]
             mask_features_ = mask_features[object_idxs]
+            box_conf_ = box_conf[object_idxs]
             batch_offsets_ = self.get_batch_offsets(batch_idxs_, batch_size)
 
+            # NOTE NMC
+            box_conf_ = box_conf_ * semantic_scores_max[object_idxs]
+            proposals_idx, proposals_offset, proposals_box, proposals_conf = \
+                non_maximum_cluster(box_conf_, coords_float_, pt_offsets_, pt_offsets_vertices_, batch_offsets_, mean_active=self.grouping_cfg.mean_active_nmc, iou_thresh=self.grouping_cfg.iou_thresh)
 
 
 
@@ -471,30 +457,32 @@ class SoftGroup(nn.Module):
             
             mask_features  = self.mask_tower(torch.unsqueeze(output_feats, dim=2).permute(2,1,0)).permute(2,1,0)
 
-            semantic_scores_pred = torch.argmax(semantic_scores, dim=1) # N_points
+            semantic_scores_max, semantic_scores_pred = torch.max(semantic_scores, dim=1) # N_points
 
-            object_idxs = []
+            # object_idxs = []
+            # batch_offsets = self.get_batch_offsets(batch_idxs, batch_size)
+            # for b in range(batch_size):
+            #     start, end = batch_offsets[b], batch_offsets[b+1]
 
+            #     semantic_scores_pred_b = semantic_scores_pred[start:end]
+            #     cond_inds = torch.nonzero(semantic_scores_pred_b >= 2).view(-1) + start
+            #     object_idxs.append(cond_inds)
+            # object_idxs = torch.cat(object_idxs)
 
-            batch_offsets = self.get_batch_offsets(batch_idxs, batch_size)
-            for b in range(batch_size):
-                start, end = batch_offsets[b], batch_offsets[b+1]
-
-                semantic_scores_pred_b = semantic_scores_pred[start:end]
-                cond_inds = torch.nonzero(semantic_scores_pred_b >= 2).view(-1) + start
-                object_idxs.append(cond_inds)
-            object_idxs = torch.cat(object_idxs)
-
-            # object_conditions = (semantic_scores_pred >= 2)
-            # object_idxs = torch.nonzero(object_conditions).view(-1)
+            object_conditions = (semantic_scores_pred >= 2)
+            object_idxs = torch.nonzero(object_conditions).view(-1)
 
             batch_idxs_ = batch_idxs[object_idxs]
             coords_float_ = coords_float[object_idxs]
             output_feats_ = output_feats[object_idxs]
             semantic_scores_ = semantic_scores[object_idxs]
             mask_features_ = mask_features[object_idxs]
+            box_conf_ = box_conf[object_idxs]
             batch_offsets_ = self.get_batch_offsets(batch_idxs_, batch_size)
 
+            # NOTE NMC
+            box_conf_ = box_conf_ * semantic_scores_max[object_idxs]
+            proposals_idx, proposals_offset, proposals_box, proposals_conf = non_maximum_cluster(box_conf_, coords_, pt_offsets_, pt_offsets_vertices_, batch_offsets_, mean_active=self.grouping_cfg.mean_active_nmc, iou_thresh=self.grouping_cfg.iou_thresh)
 
 
 
@@ -619,7 +607,7 @@ class SoftGroup(nn.Module):
         
     def prepare_context_query(self, coords_float, output_feats, sampling_inds, batch_size, n_points=8192):
 
-        n_points_arr = [n_points, n_points//2, n_points//4]
+        n_points_arr = [n_points, n_points//4, n_points//16]
         n_query = 128
 
 

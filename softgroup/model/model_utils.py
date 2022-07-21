@@ -244,6 +244,70 @@ def cal_giou(volumes, x1, y1, z1, x2, y2, z2, sort_indices, index):
 
     return IoU, gIoU
 
+
+@torch.no_grad()
+def non_maximum_queries(box_conf, coords, pt_offsets, pt_offsets_vertices, batch_offsets, radius=6**2, mean_active=300, iou_thresh=0.3, n_queries=64):
+    # box_conf: N
+    n_points = box_conf.shape[0]
+    batch_size = len(batch_offsets) - 1
+
+    coords_centroid = coords + pt_offsets
+    coords_min = coords + pt_offsets_vertices[:, :3]
+    coords_max = coords + pt_offsets_vertices[:, 3:]
+
+    # proposals_idx = []
+    # proposals_offset = [0]
+    proposals_conf = []
+    proposals_indices = []
+    proposal_boxes = []
+
+    # cluster_id = 0
+
+    queries_mask = torch.zeros((batch_size, n_queries), dtype=torch.bool, device=coords.device)
+    queries_inds = torch.zeros((batch_size, n_queries), dtype=torch.long, device=coords.device)
+
+    for b in range(batch_size):
+        batch_start = batch_offsets[b]
+        batch_end = batch_offsets[b + 1]
+
+        # centroid = coords_centroid[batch_start:batch_end]
+
+        x1 = coords_min[batch_start:batch_end, 0]
+        y1 = coords_min[batch_start:batch_end, 1]
+        z1 = coords_min[batch_start:batch_end, 2]
+        x2 = coords_max[batch_start:batch_end, 0]
+        y2 = coords_max[batch_start:batch_end, 1]
+        z2 = coords_max[batch_start:batch_end, 2]
+
+        volumes = (x2 - x1) * (y2 - y1) * (z2 - z1)
+
+        sort_indices = torch.argsort(box_conf[batch_start:batch_end], descending=True)
+
+        while len(sort_indices) > mean_active:
+            index = sort_indices[0]
+            sort_indices = sort_indices[1:]
+
+            IoU = cal_iou(volumes, x1, y1, z1, x2, y2, z2, sort_indices, index)
+
+            mask = (IoU >= iou_thresh)
+            neighbor_indices = torch.nonzero(mask).view(-1)
+            final_neighbor_indices = sort_indices[neighbor_indices]
+
+            cluster_indices = torch.cat([final_neighbor_indices, index.unsqueeze(0)])
+            cluster_indices = cluster_indices + batch_start
+            len_cluster = len(cluster_indices)
+
+            if len_cluster > mean_active:
+
+                proposals_conf.append(box_conf[index+batch_start])
+                proposals_indices.append(cluster_indices)
+
+                box = torch.tensor([x1[index], y1[index], z1[index], x2[index], y2[index], z2[index]])
+                proposal_boxes.append(box)
+
+
+            sort_indices = sort_indices[~mask]
+
 @torch.no_grad()
 def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch_offsets, radius=6**2, mean_active=300, iou_thresh=0.3):
     # box_conf: N
@@ -285,15 +349,11 @@ def non_maximum_cluster(box_conf, coords, pt_offsets, pt_offsets_vertices, batch
 
             IoU = cal_iou(volumes, x1, y1, z1, x2, y2, z2, sort_indices, index)
 
-            # distances = torch.sum((pivot - centroid_)**2, -1)
-
-            # mask = (IoU >= iou_thresh) | (distances < 0.016)
             mask = (IoU >= iou_thresh)
             neighbor_indices = torch.nonzero(mask).view(-1)
             final_neighbor_indices = sort_indices[neighbor_indices]
 
             cluster_indices = torch.cat([final_neighbor_indices, index.unsqueeze(0)])
-            # cluster_indices_clone = cluster_indices.clone()
             cluster_indices = cluster_indices + batch_start
             len_cluster = len(cluster_indices)
 
