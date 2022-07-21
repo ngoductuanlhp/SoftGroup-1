@@ -79,7 +79,7 @@ dataloader:
 
 optimizer:
   type: 'Adam'
-  lr: 0.0005
+  lr: 0.002
 
 save_cfg:
   semantic: False
