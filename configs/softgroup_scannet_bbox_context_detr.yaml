@@ -7,12 +7,12 @@ model:
   semantic_only: False
   ignore_label: -100
   transformer_cfg:
-    n_context_points: 2048
-    n_queries: 128
+    n_context_points: 4096
+    n_queries: 96
     dec_dim: 64
-    dec_ffn_dim: 64
-    dec_nhead: 4
-    dec_nlayers: 4
+    dec_ffn_dim: 256
+    dec_nhead: 8
+    dec_nlayers: 6
 
   grouping_cfg:
     iou_thresh: 0.2
@@ -92,5 +92,5 @@ fp16: True
 epochs: 40
 step_epoch: 15
 save_freq: 4
-pretrain: 'work_dirs/softgroup_scannet_bbox_context_detr/detr_baseline/latest.pth'
+pretrain: 'work_dirs/softgroup_scannet_bbox_context_detr/detr_baseline/best.pth'
 work_dir: ''

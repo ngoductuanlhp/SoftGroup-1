@@ -303,11 +303,11 @@ class SoftGroup(nn.Module):
                 semantic_scores_pred_b = semantic_scores_pred[start:end]
                 cond_inds = torch.nonzero(semantic_scores_pred_b >= 2).view(-1) + start
 
-                if len(cond_inds) > 30000:
+                if len(cond_inds) > 20000:
                     # coords_temp = coords_float[cond_inds].unsqueeze(0)
                     # new_inds = furthest_point_sample(coords_temp, 12000).long().squeeze(0)
 
-                    new_inds = torch.tensor(np.random.choice(len(cond_inds), 30000, replace=False), dtype=torch.long, device=coords_float.device)
+                    new_inds = torch.tensor(np.random.choice(len(cond_inds), 20000, replace=False), dtype=torch.long, device=coords_float.device)
 
                     cond_inds = cond_inds[new_inds]
                 
@@ -671,7 +671,7 @@ class SoftGroup(nn.Module):
         n_queries, n_contexts = relative_coords.shape[1], relative_coords.shape[2]
 
         relative_embedding_pos = self.pos_embedding(relative_coords.reshape(batch_size, n_queries*n_contexts, -1), input_range=input_range).reshape(batch_size, -1, n_queries, n_contexts,)
-        relative_embedding_pos   = relative_embedding_pos.permute(2,3,0,1)
+        relative_embedding_pos   = relative_embedding_pos.permute(2,3,0,1) # n_queries, n_context, batch, channel
 
         # num_layers x n_queries x batch x channel
         dec_outputs = self.decoder(
