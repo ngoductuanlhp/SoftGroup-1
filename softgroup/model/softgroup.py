@@ -148,6 +148,15 @@ class SoftGroup(nn.Module):
             output_dim=self.instance_classes+1
         )
 
+        self.detr_conf_head = GenericMLP(
+            input_dim=transformer_cfg.dec_dim,
+            hidden_dims=[transformer_cfg.dec_dim, transformer_cfg.dec_dim],
+            norm_fn_name="bn1d",
+            activation="relu",
+            use_conv=True,
+            output_dim=1
+        )
+
         ''' DETR-Decoder '''
         decoder_layer = TransformerDecoderLayer(
             d_model=transformer_cfg.dec_dim,
@@ -337,7 +346,7 @@ class SoftGroup(nn.Module):
             dec_outputs = self.forward_decoder(context_locs, context_feats, query_locs, pc_dims)
 
 
-            cls_logits_layers, mask_logits_layers = self.forward_head(dec_outputs, mask_features_, coords_float_, query_locs, batch_offsets_)
+            cls_logits_layers, mask_logits_layers, conf_logits_layers = self.forward_head(dec_outputs, mask_features_, coords_float_, query_locs, batch_offsets_)
 
 
             model_outputs.update(dict(
@@ -349,6 +358,7 @@ class SoftGroup(nn.Module):
                 box_conf=box_conf,
                 cls_logits_layers=cls_logits_layers,
                 mask_logits_layers=mask_logits_layers,
+                conf_logits_layers=conf_logits_layers,
             ))
 
 
@@ -508,10 +518,10 @@ class SoftGroup(nn.Module):
             dec_outputs = self.forward_decoder(context_locs, context_feats, query_locs, pc_dims)
 
 
-            cls_logits_layers, mask_logits_layers = self.forward_head(dec_outputs, mask_features_, coords_float_, query_locs, batch_offsets_)
+            cls_logits_layers, mask_logits_layers, conf_logits_layers = self.forward_head(dec_outputs, mask_features_, coords_float_, query_locs, batch_offsets_)
 
 
-            pred_instances = self.get_instance(scan_ids[0], mask_logits_layers[-1], cls_logits_layers[-1], object_idxs, batch_offsets, batch_offsets_, semantic_scores_,\
+            pred_instances = self.get_instance(scan_ids[0], mask_logits_layers[-1], cls_logits_layers[-1], conf_logits_layers[-1], object_idxs, batch_offsets, batch_offsets_, semantic_scores_,\
                                                  logit_thresh=0.5, score_thresh=0.5, npoint_thresh=100)
 
             gt_instances = self.get_gt_instances(semantic_labels, instance_labels)
@@ -689,12 +699,15 @@ class SoftGroup(nn.Module):
         
         # outputs = []
         cls_logits_layers, mask_logits_layers = [], []
+        conf_logits_layers = []
         n_inst_per_layer = batch * n_queries
         for l in range(num_layers):
 
             dec_output = dec_outputs[l] # n_queries x batch x channel
             # mlp head outputs are (num_layers x batch) x noutput x nqueries, so transpose last two dims
             cls_logits = self.detr_sem_head(dec_output.permute(1,2,0)).transpose(1, 2) # batch x n_queries x n_classes
+
+            conf_logits = self.detr_conf_head(dec_output.permute(1,2,0)).transpose(1, 2).squeeze(-1) # batch x n_queries
 
             param_kernel2 = dec_output.transpose(0,1).flatten(0,1) # (batch * n_queries) * channel
             before_embedding_feature    = self.before_embedding_tower(torch.unsqueeze(param_kernel2, dim=2))
@@ -728,7 +741,8 @@ class SoftGroup(nn.Module):
             # outputs.append(output)
             cls_logits_layers.append(cls_logits)
             mask_logits_layers.append(mask_logits_list)
-        return cls_logits_layers, mask_logits_layers
+            conf_logits_layers.append(conf_logits)
+        return cls_logits_layers, mask_logits_layers, conf_logits_layers
 
     def parse_dynamic_params(self, params, out_channels):
         assert params.dim()==2
@@ -772,7 +786,7 @@ class SoftGroup(nn.Module):
 
         return x
 
-    def get_instance(self, scan_id, mask_logits, cls_logits, object_idxs, batch_offsets, batch_offsets_, semantic_scores_, logit_thresh=0.5, score_thresh=0.5, npoint_thresh=100):
+    def get_instance(self, scan_id, mask_logits, cls_logits, conf_logits, object_idxs, batch_offsets, batch_offsets_, semantic_scores_, logit_thresh=0.5, score_thresh=0.5, npoint_thresh=100):
 
         semantic_scores_ = F.softmax(semantic_scores_,dim=1)
         # cls_logits_pred = cls_logits.max(2)[1] # batch x n_queries x 1 
@@ -788,6 +802,8 @@ class SoftGroup(nn.Module):
         mask_logit_b = mask_logits[b].sigmoid()
         cls_logits_b = F.softmax(cls_logits[b], dim=-1)
         cls_logits_pred_b = torch.argmax(cls_logits[b], dim=-1)
+
+        conf_logits_b = torch.clamp(conf_logits[b], 0.0, 1.0)
 
         n_queries = mask_logit_b.shape[0]
 
@@ -808,7 +824,9 @@ class SoftGroup(nn.Module):
         sem_scores = torch.sum(semantic_scores_b[None,:,:].expand(n_queries, semantic_scores_b.shape[0], semantic_scores_b.shape[1]) * mask_logit_b_bool.int()[:,:,None], dim=1) / (proposals_npoints[:, None] + 1e-6) # n_pred, n_clas
         sem_scores = torch.gather(sem_scores, 1, cls_logits_pred_b.unsqueeze(-1)).squeeze(-1) 
 
-        scores = mask_logit_scores * torch.pow(cls_logits_scores, 0.5) * sem_scores
+        # scores = mask_logit_scores * torch.pow(cls_logits_scores, 0.5) * sem_scores
+
+        scores = mask_logit_scores * torch.pow(cls_logits_scores, 0.5) * conf_logits_b
 
         final_cond = cls_preds_cond & npoints_cond & mask_logit_scores_cond
 

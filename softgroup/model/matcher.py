@@ -93,7 +93,7 @@ class HungarianMatcher(nn.Module):
         assert cost_class != 0 or cost_bbox != 0 or cost_giou != 0, "all costs cant be 0"
     
     @torch.no_grad()
-    def forward(self, cls_preds, mask_logits_preds, semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=2):
+    def forward(self, cls_preds, mask_logits_preds, conf_preds, semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=2):
         # cls_preds : batch x classes x n_queries
         batch_size, n_queries, _ = cls_preds.shape
 
@@ -106,6 +106,7 @@ class HungarianMatcher(nn.Module):
 
             cls_preds_b = cls_preds[b] # n_queries, n_classes
             mask_logits_preds_b = mask_logits_preds[b]
+            conf_preds_b = conf_preds[b] # n_queries
 
             instance_labels_b = instance_labels_[start:end]
             semantic_labels_b = semantic_labels_[start:end]
@@ -157,9 +158,12 @@ class HungarianMatcher(nn.Module):
             #     breakpoint()
 
             cls_preds_b_sm = torch.nn.functional.softmax(cls_preds_b, dim=-1)
+
             class_cost = -cls_preds_b_sm[:, cls_labels_b]
 
-            final_cost = 1 * class_cost + 1 * dice_cost
+            conf_cost = -conf_preds_b[:, None].repeat(1, n_inst_gt)
+
+            final_cost = 1 * class_cost + 1 * dice_cost + 1 * conf_cost
             
             final_cost = final_cost.detach().cpu().numpy()
 

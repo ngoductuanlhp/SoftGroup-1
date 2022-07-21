@@ -6,6 +6,18 @@ from .model_utils import giou_aabb, iou_aabb, non_maximum_cluster, non_maximum_c
 
 from .matcher import giou_aabb_matcher
 
+@torch.no_grad()
+def get_iou(inputs, targets, thresh=0.5):
+    inputs_bool = inputs.detach().sigmoid()
+    inputs_bool = ( inputs_bool >= thresh)
+
+    intersection = (inputs_bool * targets).sum(-1)
+    union = inputs_bool.sum(-1) + targets.sum(-1) - intersection
+    
+    iou = intersection / (union + 1e-6)
+
+    return iou
+
 def compute_dice_loss(inputs, targets, num_boxes):
     """
     Compute the DICE loss, similar to generalized IOU for masks
@@ -73,10 +85,10 @@ class Criterion(nn.Module):
         self.register_buffer("empty_weight", empty_weight)
 
         self.loss_weight = {
-            'dice_loss': 1,
-            'focal_loss': 1,
+            'dice_loss': 4,
+            'focal_loss': 4,
             'cls_loss': 1,
-            # 'giou_loss': 1.
+            'iou_loss': 1,
         }
 
     def _get_src_permutation_idx(self, indices):
@@ -191,7 +203,7 @@ class Criterion(nn.Module):
         
         
 
-    def single_layer_loss(self, mask_logits_list, cls_logits, row_indices, cls_labels, inst_labels, batch_size, n_queries):
+    def single_layer_loss(self, mask_logits_list, cls_logits, conf_logits, row_indices, cls_labels, inst_labels, batch_size, n_queries, last_layer=False):
         loss = torch.tensor(0.0, requires_grad=True, device=cls_logits.device, dtype=torch.float)
         # loss = 0.0
         loss_dict = {}
@@ -204,6 +216,7 @@ class Criterion(nn.Module):
         for b in range(batch_size):
             mask_logit_b = mask_logits_list[b]
             cls_logit_b = cls_logits[b] # n_queries x n_classes
+            conf_logits_b = conf_logits[b] # n_queries
 
             pred_inds, cls_label, inst_label = row_indices[b], cls_labels[b], inst_labels[b]
 
@@ -214,6 +227,7 @@ class Criterion(nn.Module):
                 continue
 
             mask_logit_pred = mask_logit_b[pred_inds]
+            conf_logits_pred = conf_logits_b[pred_inds]
 
             num_gt_batch = len(pred_inds)
             num_gt += num_gt_batch
@@ -222,6 +236,11 @@ class Criterion(nn.Module):
 
             # breakpoint()
             loss_dict['focal_loss'] = loss_dict['dice_loss'] + compute_sigmoid_focal_loss(mask_logit_pred, inst_label, num_gt_batch)
+
+            gt_iou = get_iou(mask_logit_pred, inst_label)
+            
+            loss_dict['iou_loss'] = loss_dict['iou_loss'] + F.mse_loss(conf_logits_pred, gt_iou, reduction='sum') / num_gt_batch
+
 
             # target_classes = torch.full(
             #     (n_queries), self.instance_classes, dtype=torch.int64, device=cls_logits.device
@@ -238,10 +257,14 @@ class Criterion(nn.Module):
                 reduction="mean",
             )
 
-        for k, v in loss_dict.items():
-            loss = loss + self.loss_weight[k] * v
-        loss = loss / batch_size
+        for k in loss_dict.keys():
+            loss_dict[k] = loss_dict[k] / batch_size
 
+        for k, v in self.loss_weight.items():
+            loss = loss + loss_dict[k] * v
+
+        # if last_layer:
+        #     print('iou loss', loss_dict['iou_loss'])
         return loss
 
     def forward(self, batch_inputs, model_outputs):
@@ -273,6 +296,7 @@ class Criterion(nn.Module):
         ''' Main loss '''
         mask_logits_layers = model_outputs["mask_logits_layers"]
         cls_logits_layers = model_outputs["cls_logits_layers"]
+        conf_logits_layers = model_outputs["conf_logits_layers"]
 
         batch_offsets_ = model_outputs["batch_offsets_"]
         object_idxs = model_outputs["object_idxs"]
@@ -284,7 +308,7 @@ class Criterion(nn.Module):
         n_layers = len(cls_logits_layers) 
         batch_size, n_queries = cls_logits_layers[-1].shape[:2]
 
-        row_indices, cls_labels, inst_labels = self.matcher(cls_logits_layers[-1], mask_logits_layers[-1],\
+        row_indices, cls_labels, inst_labels = self.matcher(cls_logits_layers[-1], mask_logits_layers[-1], conf_logits_layers[-1],\
                                                             semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=self.label_shift)
         
         # breakpoint()
@@ -294,12 +318,12 @@ class Criterion(nn.Module):
         #     return loss_dict
 
         # NOTE main loss
-        main_loss = self.single_layer_loss(mask_logits_layers[-1], cls_logits_layers[-1], row_indices, cls_labels, inst_labels, batch_size, n_queries)
+        main_loss = self.single_layer_loss(mask_logits_layers[-1], cls_logits_layers[-1],  conf_logits_layers[-1], row_indices, cls_labels, inst_labels, batch_size, n_queries, last_layer=True)
         loss_dict[f'loss_layer{n_layers-1}'] = main_loss
 
         ''' Auxilary loss '''
         for l in range(n_layers-1):
-            interm_loss = self.single_layer_loss(mask_logits_layers[l], cls_logits_layers[l], row_indices, cls_labels, inst_labels, batch_size, n_queries)
+            interm_loss = self.single_layer_loss(mask_logits_layers[l], cls_logits_layers[l],  conf_logits_layers[l], row_indices, cls_labels, inst_labels, batch_size, n_queries)
             # interm_loss = interm_loss * 0.5
 
             loss_dict[f'loss_layer{l}'] = interm_loss
