@@ -93,7 +93,7 @@ class HungarianMatcher(nn.Module):
         assert cost_class != 0 or cost_bbox != 0 or cost_giou != 0, "all costs cant be 0"
     
     @torch.no_grad()
-    def forward(self, cls_preds, mask_logits_preds, conf_preds, semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=2):
+    def forward(self, cls_preds, mask_logits_preds, conf_preds, instance_cls, semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=2):
         # cls_preds : batch x classes x n_queries
         batch_size, n_queries, _ = cls_preds.shape
 
@@ -109,53 +109,38 @@ class HungarianMatcher(nn.Module):
             conf_preds_b = conf_preds[b] # n_queries
 
             instance_labels_b = instance_labels_[start:end]
-            semantic_labels_b = semantic_labels_[start:end]
+            # semantic_labels_b = semantic_labels_[start:end]
             # coords_float_b = coords_float_[start:end]
 
             n_points = instance_labels_b.shape[0]
 
             unique_inst = torch.unique(instance_labels_b)
             unique_inst = unique_inst[unique_inst != self.ignore_label]
+            
+            
+            cls_label = instance_cls[unique_inst] # n_inst
+            cls_label_cond = (cls_label >= 0)
+            cls_labels_b = cls_label[cls_label_cond]
+            fg_unique_inst = unique_inst[cls_label_cond]
 
-            cls_labels_b = []
-            mask_labels_b = []
+            n_inst_gt = fg_unique_inst.shape[0]
 
-            # print(b, semantic_labels_b.shape)
-
-            for i in range(len(unique_inst)):
-                inst_idx = unique_inst[i]
-
-                cond_mask = (instance_labels_b==inst_idx)
-                inst_points_inds = torch.nonzero(cond_mask).view(-1)
-
-                # breakpoint()
-                cls_label = (semantic_labels_b[inst_points_inds[0]] - instance_label_shift).item()
-
-                # print(cls_label)
-                if cls_label >= 0:
-                    cls_labels_b.append(cls_label)
-                    mask_labels_b.append(cond_mask.float())
-
-
-            n_inst_gt = len(cls_labels_b)
             if n_inst_gt == 0:
                 row_indices.append(None)
                 inst_labels.append(None)
                 cls_labels.append(None)
                 continue
 
-            mask_labels_b = torch.stack(mask_labels_b, dim=0)
-            
-            cls_labels_b = torch.tensor(cls_labels_b, device=cls_preds.device, dtype=torch.long)
-
+            mask_labels_b = torch.zeros((n_inst_gt, n_points), device=cls_preds.device, dtype=torch.float)
+            for i in range(n_inst_gt):
+                inst_id = fg_unique_inst[i]
+                mask_labels_b[i] = (instance_labels_b == inst_id).float()
 
             dice_cost = compute_dice(mask_logits_preds_b.reshape(-1, 1, n_points).repeat(1, n_inst_gt, 1).flatten(0, 1), 
                                     mask_labels_b.reshape(1, -1, n_points).repeat(n_queries, 1, 1).flatten(0, 1))
 
             dice_cost = dice_cost.reshape(n_queries, n_inst_gt)
 
-            # if torch.any(torch.isnan(dice_cost)):
-            #     breakpoint()
 
             cls_preds_b_sm = torch.nn.functional.softmax(cls_preds_b, dim=-1)
 
@@ -163,7 +148,7 @@ class HungarianMatcher(nn.Module):
 
             conf_cost = -conf_preds_b[:, None].repeat(1, n_inst_gt)
 
-            final_cost = 1 * class_cost + 1 * dice_cost + 1 * conf_cost
+            final_cost = 1 * class_cost + 5 * dice_cost + 1 * conf_cost
             
             final_cost = final_cost.detach().cpu().numpy()
 

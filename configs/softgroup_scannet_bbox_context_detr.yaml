@@ -13,6 +13,7 @@ model:
     dec_ffn_dim: 256
     dec_nhead: 8
     dec_nlayers: 6
+    n_subsample: 20000
 
   grouping_cfg:
     iou_thresh: 0.2
@@ -72,7 +73,7 @@ data:
 dataloader:
   train:
     batch_size: 6
-    num_workers: 6
+    num_workers: 2
   test:
     batch_size: 1
     num_workers: 1

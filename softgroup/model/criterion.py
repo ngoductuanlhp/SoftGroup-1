@@ -309,7 +309,7 @@ class Criterion(nn.Module):
         batch_size, n_queries = cls_logits_layers[-1].shape[:2]
 
         row_indices, cls_labels, inst_labels = self.matcher(cls_logits_layers[-1], mask_logits_layers[-1], conf_logits_layers[-1],\
-                                                            semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=self.label_shift)
+                                                            instance_cls, semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=self.label_shift)
         
         # breakpoint()
         # if len(row_indices) < batch_size:
