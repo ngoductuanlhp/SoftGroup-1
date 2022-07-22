@@ -74,6 +74,8 @@ class Criterion(nn.Module):
         self.matcher = matcher
         self.point_wise_loss = point_wise_loss
 
+        self.ignore_label = ignore_label
+
         self.label_shift = semantic_classes - instance_classes
         self.semantic_classes = semantic_classes
         self.instance_classes = instance_classes

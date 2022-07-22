@@ -12,4 +12,4 @@ CUDA_VISIBLE_DEVICES=0,1 OMP_NUM_THREADS=1 torchrun --nproc_per_node=2 --master_
 CUDA_VISIBLE_DEVICE=0 python3 tools/train.py configs/softgroup_scannet_bbox_context_head.yaml --resume work_dirs/softgroup_scannet_bbox_context_head/epoch_1.pth --exp_name debug
 
 CUDA_VISIBLE_DEVICES=4,7 OMP_NUM_THREADS=4 torchrun --nproc_per_node=2 --master_port=$((RANDOM + 10000)) tools/train.py --dist configs/softgroup_scannet_bbox_context_detr.yaml --exp_name detr
-CUDA_VISIBLE_DEVICES=1 python3 tools/train.py configs/softgroup_scannet_bbox_context_detr.yaml --exp_name detr_baseline_conf
+CUDA_VISIBLE_DEVICES=3 python3 tools/train.py configs/softgroup_scannet_bbox_context_detr.yaml --exp_name detr_baseline_trainall_small_lr_backbone
