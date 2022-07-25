@@ -41,15 +41,18 @@ def shift_scale_points(pred_xyz, src_range, dst_range=None):
     src_range: [[B x 3], [B x 3]] - min and max XYZ coords
     dst_range: [[B x 3], [B x 3]] - min and max XYZ coords
     """
+    last_dim_range = src_range[0].shape[-1]
     if dst_range is None:
         dst_range = [
-            torch.zeros((src_range[0].shape[0], 3), device=src_range[0].device),
-            torch.ones((src_range[0].shape[0], 3), device=src_range[0].device),
+            torch.zeros((src_range[0].shape[0], last_dim_range), device=src_range[0].device),
+            torch.ones((src_range[0].shape[0], last_dim_range), device=src_range[0].device),
         ]
 
     if pred_xyz.ndim == 4:
         src_range = [x[:, None] for x in src_range]
         dst_range = [x[:, None] for x in dst_range]
+
+    # breakpoint()
 
     assert src_range[0].shape[0] == pred_xyz.shape[0]
     assert dst_range[0].shape[0] == pred_xyz.shape[0]

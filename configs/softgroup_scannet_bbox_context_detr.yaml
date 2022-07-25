@@ -72,8 +72,8 @@ data:
 
 dataloader:
   train:
-    batch_size: 6
-    num_workers: 2
+    batch_size: 7
+    num_workers: 4
   test:
     batch_size: 1
     num_workers: 1
