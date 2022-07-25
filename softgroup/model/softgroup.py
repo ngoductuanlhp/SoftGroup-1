@@ -436,9 +436,10 @@ class SoftGroup(nn.Module):
             output_feats_ = output_feats[object_idxs]
             semantic_scores_ = semantic_scores[object_idxs]
             mask_features_ = mask_features[object_idxs]
+            pt_offsets_vertices_ = pt_offsets_vertices[object_idxs]
             batch_offsets_ = self.get_batch_offsets(batch_idxs_, batch_size)
 
-            contexts = self.forward_aggregator(coords_float_, output_feats_, batch_offsets_, batch_size, pre_enc_inds=None)
+            contexts = self.forward_aggregator(coords_float_, output_feats_, pt_offsets_vertices_, batch_offsets_, batch_size, pre_enc_inds=None)
             context_locs, context_boxes, context_feats, pre_enc_inds = contexts
 
             # NOTE get queries
