@@ -85,8 +85,8 @@ class Criterion(nn.Module):
         self.register_buffer("empty_weight", empty_weight)
 
         self.loss_weight = {
-            'dice_loss': 4,
-            'focal_loss': 4,
+            'dice_loss': 1,
+            'focal_loss': 1,
             'cls_loss': 1,
             'iou_loss': 1,
         }
@@ -250,12 +250,23 @@ class Criterion(nn.Module):
 
             target_classes[pred_inds] = cls_label
 
-            loss_dict['cls_loss'] = loss_dict['cls_loss'] + F.cross_entropy(
-                cls_logit_b,
-                target_classes,
-                self.empty_weight,
-                reduction="mean",
-            )
+            # loss_dict['cls_loss'] = loss_dict['cls_loss'] + F.cross_entropy(
+            #     cls_logit_b,
+            #     target_classes,
+            #     self.empty_weight,
+            #     reduction="mean",
+            # )
+
+
+            target_classes_onehot = torch.zeros([cls_logit_b.shape[0], cls_logit_b.shape[1]+1],
+                                                dtype=cls_logit_b.dtype, layout=cls_logit_b.layout, device=cls_logit_b.device)
+            target_classes_onehot.scatter_(1, target_classes.unsqueeze(-1), 1) # n_queries x (n_classes+1)
+
+            target_classes_onehot = target_classes_onehot[:, :-1]
+
+            loss_dict['cls_loss'] = loss_dict['cls_loss'] + compute_sigmoid_focal_loss(cls_logit_b, target_classes_onehot, num_gt_batch)
+            # loss_ce = sigmoid_focal_loss(src_logits, target_classes_onehot, targets["num_boxes"], alpha=0.25, gamma=2) * \
+            #         src_logits.shape[1]
 
         for k in loss_dict.keys():
             loss_dict[k] = loss_dict[k] / batch_size

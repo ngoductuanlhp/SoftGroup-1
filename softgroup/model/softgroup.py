@@ -131,13 +131,21 @@ class SoftGroup(nn.Module):
             output_use_bias=False,
         )
 
+        # self.detr_sem_head = GenericMLP(
+        #     input_dim=transformer_cfg.dec_dim,
+        #     hidden_dims=[transformer_cfg.dec_dim, transformer_cfg.dec_dim],
+        #     norm_fn_name="bn1d",
+        #     activation="relu",
+        #     use_conv=True,
+        #     output_dim=self.instance_classes+1
+        # )
         self.detr_sem_head = GenericMLP(
             input_dim=transformer_cfg.dec_dim,
             hidden_dims=[transformer_cfg.dec_dim, transformer_cfg.dec_dim],
             norm_fn_name="bn1d",
             activation="relu",
             use_conv=True,
-            output_dim=self.instance_classes+1
+            output_dim=self.instance_classes
         )
 
         self.detr_conf_head = GenericMLP(
@@ -691,7 +699,7 @@ class SoftGroup(nn.Module):
 
     def get_instance(self, scan_id, mask_logits, cls_logits, conf_logits, object_idxs, batch_offsets, batch_offsets_, semantic_scores_, logit_thresh=0.5, score_thresh=0.5, npoint_thresh=100):
 
-        semantic_scores_ = F.softmax(semantic_scores_,dim=1)
+        # semantic_scores_ = F.softmax(semantic_scores_,dim=1)
         # cls_logits_pred = cls_logits.max(2)[1] # batch x n_queries x 1 
         
         # NOTE only batch 1 when test
@@ -702,42 +710,64 @@ class SoftGroup(nn.Module):
         end     = batch_offsets[b+1]
         num_points = end - start
 
-        mask_logit_b = mask_logits[b].sigmoid()
-        cls_logits_b = F.softmax(cls_logits[b], dim=-1)
-        cls_logits_pred_b = torch.argmax(cls_logits[b], dim=-1)
+        n_classes = cls_logits[b].shape[-1]
 
-        conf_logits_b = torch.clamp(conf_logits[b], 0.0, 1.0)
+        mask_logit_b = mask_logits[b].sigmoid()
+
+        # cls_logits_b = F.softmax(cls_logits[b], dim=-1)
+        cls_logits_b = cls_logits[b].sigmoid() # n_queries, n_classes
+        # cls_logits_pred_b = torch.argmax(cls_logits[b], dim=-1)
+
+        conf_logits_b = torch.clamp(conf_logits[b], 0.0, 1.0) # n_queries
 
         n_queries = mask_logit_b.shape[0]
 
-        semantic_scores_b = semantic_scores_[batch_offsets_[b]:batch_offsets_[b+1]]
+        # semantic_scores_b = semantic_scores_[batch_offsets_[b]:batch_offsets_[b+1]]
 
-        cls_preds_cond = (cls_logits_pred_b < self.instance_classes)
+        # cls_preds_cond = (cls_logits_pred_b < self.instance_classes)
         mask_logit_b_bool = (mask_logit_b >= logit_thresh)
 
         proposals_npoints = torch.sum(mask_logit_b_bool, dim=1)
         npoints_cond = (proposals_npoints >= npoint_thresh)
 
         mask_logit_scores = torch.sum(mask_logit_b * mask_logit_b_bool.int(), dim=1) / (proposals_npoints + 1e-6)
-        mask_logit_scores_cond = (mask_logit_scores >= score_thresh)
+        # mask_logit_scores_cond = (mask_logit_scores >= score_thresh) # n_queries
 
 
-        cls_logits_scores = torch.gather(cls_logits_b, 1, cls_logits_pred_b.unsqueeze(-1)).squeeze(-1) 
+        # cls_logits_scores = torch.gather(cls_logits_b, 1, cls_logits_pred_b.unsqueeze(-1)).squeeze(-1) 
 
-        sem_scores = torch.sum(semantic_scores_b[None,:,:].expand(n_queries, semantic_scores_b.shape[0], semantic_scores_b.shape[1]) * mask_logit_b_bool.int()[:,:,None], dim=1) / (proposals_npoints[:, None] + 1e-6) # n_pred, n_clas
-        sem_scores = torch.gather(sem_scores, 1, cls_logits_pred_b.unsqueeze(-1)).squeeze(-1) 
+        # sem_scores = torch.sum(semantic_scores_b[None,:,:].expand(n_queries, semantic_scores_b.shape[0], semantic_scores_b.shape[1]) * mask_logit_b_bool.int()[:,:,None], dim=1) / (proposals_npoints[:, None] + 1e-6) # n_pred, n_clas
+        # sem_scores = torch.gather(sem_scores, 1, cls_logits_pred_b.unsqueeze(-1)).squeeze(-1) 
 
         # scores = mask_logit_scores * torch.pow(cls_logits_scores, 0.5) * sem_scores
 
-        scores = mask_logit_scores * torch.pow(cls_logits_scores, 0.5) * conf_logits_b
+        # scores = mask_logit_scores * torch.pow(cls_logits_scores, 0.5) * conf_logits_b
 
-        final_cond = cls_preds_cond & npoints_cond & mask_logit_scores_cond
+        # cls_logits_b # n_queries, n_classes
+        # 
+        cls_logits_b = cls_logits_b.flatten()
+        # cls_logits_cond = (cls_logits_b >= 0.5)
+        conf_logits_b_dup = conf_logits_b[:, None].repeat(1, n_classes).flatten()
+        mask_logit_scores_dub = mask_logit_scores[:, None].repeat(1, n_classes).flatten()
+        scores = mask_logit_scores_dub * cls_logits_b * conf_logits_b_dup
+        scores_cond = (scores >= score_thresh)
+
+        npoints_cond_dup = npoints_cond[:, None].repeat(1, n_classes).flatten()
+
+        final_cond = scores_cond & npoints_cond_dup
+
+        # final_cond = cls_preds_cond & npoints_cond & mask_logit_scores_cond
 
         if torch.count_nonzero(final_cond) == 0:
             return instances
 
-        cls_final = cls_logits_pred_b[final_cond]
-        masks_final = mask_logit_b_bool[final_cond]
+        # mask_logit_b_bool_dup = mask_logit_b_bool[:, None, :].repeat(1, n_classes, 1).reshape(-1, mask_logit_b_bool.shape[1])
+        mask_logit_b_bool_dup = mask_logit_b_bool[:, None, :].expand(mask_logit_b_bool.shape[0], n_classes, mask_logit_b_bool.shape[1]).reshape(-1, mask_logit_b_bool.shape[1])
+
+        cls_preds = torch.arange(n_classes, dtype=torch.long, device=cls_logits_b.device)[None,:].repeat(n_queries, 1).flatten()
+
+        cls_final = cls_preds[final_cond]
+        masks_final = mask_logit_b_bool_dup[final_cond]
         scores_final = scores[final_cond]
 
         num_insts = scores_final.shape[0]
@@ -749,15 +779,15 @@ class SoftGroup(nn.Module):
 
         proposals_pred[inst_inds, point_inds] = 1
 
-        pick_idxs = non_max_suppression_gpu(proposals_pred, scores_final, threshold=0.2)  # int, (nCluster, N)
+        # pick_idxs = non_max_suppression_gpu(proposals_pred, scores_final, threshold=0.2)  # int, (nCluster, N)
 
-        proposals_pred = proposals_pred[pick_idxs].cpu().numpy()
-        scores_final = scores_final[pick_idxs].cpu().numpy()
-        cls_final = cls_final[pick_idxs].cpu().numpy()
+        # proposals_pred = proposals_pred[pick_idxs].cpu().numpy()
+        # scores_final = scores_final[pick_idxs].cpu().numpy()
+        # cls_final = cls_final[pick_idxs].cpu().numpy()
 
-        # proposals_pred = proposals_pred.cpu().numpy()
-        # scores_final = scores_final.cpu().numpy()
-        # cls_final = cls_final.cpu().numpy()
+        proposals_pred = proposals_pred.cpu().numpy()
+        scores_final = scores_final.cpu().numpy()
+        cls_final = cls_final.cpu().numpy()
 
         
         for i in range(cls_final.shape[0]):

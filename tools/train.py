@@ -131,44 +131,46 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
                 all_gt_insts.append(res['gt_instances'])
                 coords.append(res['coords_float'])
 
-        global best_metric
+        try:
+            global best_metric
 
-        if cfg.model.semantic_only:
-            logger.info('Evaluate semantic segmentation and offset MAE')
-            miou, acc, mae = point_eval.get_eval(logger)
+            if cfg.model.semantic_only:
+                logger.info('Evaluate semantic segmentation and offset MAE')
+                miou, acc, mae = point_eval.get_eval(logger)
 
-            writer.add_scalar('val/mIoU', miou, epoch)
-            writer.add_scalar('val/Acc', acc, epoch)
-            writer.add_scalar('val/Offset MAE', mae, epoch)
+                writer.add_scalar('val/mIoU', miou, epoch)
+                writer.add_scalar('val/Acc', acc, epoch)
+                writer.add_scalar('val/Offset MAE', mae, epoch)
 
-            if best_metric < miou:
-                best_metric = miou
-                checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq, best=True)
+                if best_metric < miou:
+                    best_metric = miou
+                    checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq, best=True)
 
-        else:
-            logger.info('Evaluate instance segmentation')
-            scannet_eval = ScanNetEval(val_set.CLASSES)
+            else:
+                logger.info('Evaluate instance segmentation')
+                scannet_eval = ScanNetEval(val_set.CLASSES)
 
-            # logger.info('Evaluate axis-align box prediction')
-            # eval_res = scannet_eval.evaluate_box(all_pred_insts, all_gt_insts, coords)
+                # logger.info('Evaluate axis-align box prediction')
+                # eval_res = scannet_eval.evaluate_box(all_pred_insts, all_gt_insts, coords)
 
-            eval_res = scannet_eval.evaluate(all_pred_insts, all_gt_insts)
-            del all_pred_insts, all_gt_insts
-            
-            writer.add_scalar('val/AP', eval_res['all_ap'], epoch)
-            writer.add_scalar('val/AP_50', eval_res['all_ap_50%'], epoch)
-            writer.add_scalar('val/AP_25', eval_res['all_ap_25%'], epoch)
-            logger.info('AP: {:.3f}. AP_50: {:.3f}. AP_25: {:.3f}'.format(
-                eval_res['all_ap'], eval_res['all_ap_50%'], eval_res['all_ap_25%']))
+                eval_res = scannet_eval.evaluate(all_pred_insts, all_gt_insts)
+                del all_pred_insts, all_gt_insts
+                
+                writer.add_scalar('val/AP', eval_res['all_ap'], epoch)
+                writer.add_scalar('val/AP_50', eval_res['all_ap_50%'], epoch)
+                writer.add_scalar('val/AP_25', eval_res['all_ap_25%'], epoch)
+                logger.info('AP: {:.3f}. AP_50: {:.3f}. AP_25: {:.3f}'.format(
+                    eval_res['all_ap'], eval_res['all_ap_50%'], eval_res['all_ap_25%']))
 
-            # if len(all_debug_accu) > 0:
-            #     accu = np.mean(np.array(all_debug_accu))
-            #     logger.info('Mean accuracy of classification: {:.3f}'.format(accu))
+                # if len(all_debug_accu) > 0:
+                #     accu = np.mean(np.array(all_debug_accu))
+                #     logger.info('Mean accuracy of classification: {:.3f}'.format(accu))
 
-            if best_metric < eval_res['all_ap_50%']:
-                best_metric = eval_res['all_ap_50%']
-                checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq, best=True)
-
+                if best_metric < eval_res['all_ap_50%']:
+                    best_metric = eval_res['all_ap_50%']
+                    checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq, best=True)
+        except:
+            print('Eval error')
 
 def main():
     args = get_args()

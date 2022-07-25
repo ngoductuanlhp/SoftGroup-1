@@ -142,13 +142,21 @@ class HungarianMatcher(nn.Module):
             dice_cost = dice_cost.reshape(n_queries, n_inst_gt)
 
 
-            cls_preds_b_sm = torch.nn.functional.softmax(cls_preds_b, dim=-1)
+            # cls_preds_b_sm = torch.nn.functional.softmax(cls_preds_b, dim=-1)
+            cls_preds_b_sigmoid = cls_preds_b.sigmoid()
 
-            class_cost = -cls_preds_b_sm[:, cls_labels_b]
+            # Compute the classification cost.
+            alpha = 0.25
+            gamma = 2.0
+            neg_cost_class = (1 - alpha) * (cls_preds_b_sigmoid ** gamma) * (-(1 - cls_preds_b_sigmoid + 1e-8).log())
+            pos_cost_class = alpha * ((1 - cls_preds_b_sigmoid) ** gamma) * (-(cls_preds_b_sigmoid + 1e-8).log())
+            class_cost = pos_cost_class[:, cls_labels_b.long()] - neg_cost_class[:, cls_labels_b.long()] # B* queries, total_gt
+
+            # class_cost = -cls_preds_b_sm[:, cls_labels_b]
 
             conf_cost = -conf_preds_b[:, None].repeat(1, n_inst_gt)
 
-            final_cost = 1 * class_cost + 5 * dice_cost + 1 * conf_cost
+            final_cost = 1 * class_cost + 1 * dice_cost + 1 * conf_cost
             
             final_cost = final_cost.detach().cpu().numpy()
 
