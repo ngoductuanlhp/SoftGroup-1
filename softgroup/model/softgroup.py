@@ -20,6 +20,7 @@ import numpy as np
 import faiss                     # make faiss available
 import faiss.contrib.torch_utils
 
+import pickle
 
 class SoftGroup(nn.Module):
 
@@ -447,6 +448,18 @@ class SoftGroup(nn.Module):
             offset_vertices_preds=pt_offsets_vertices.cpu().numpy(),
             offset_labels=pt_offset_labels.cpu().numpy(),
             instance_labels=instance_labels.cpu().numpy())
+
+        save_dict = dict(
+            coords_float=coords_float.cpu().numpy(),
+            semantic_scores=semantic_scores.cpu().numpy(),
+            semantic_labels=semantic_labels.cpu().numpy(),
+            instance_labels=instance_labels.cpu().numpy(),
+            box_conf=box_conf.cpu().numpy(),
+        )
+
+        with open(f'/home/ubuntu/fewshot3d_ws/SoftGroup/results/bbox_context/sem_info/info_{scan_ids[0]}.pkl', 'wb') as handle:
+            pickle.dump(save_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
         if not self.semantic_only:
             proposals_idx, proposals_offset, proposals_box, proposals_conf, proposals_pivots, proposals_cls, proposals_batch_idxs, per_cls_object_idxs = \
                                             self.forward_grouping(semantic_scores, pt_offsets, pt_offsets_vertices, box_conf,

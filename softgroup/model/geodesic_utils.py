@@ -176,3 +176,100 @@ def cal_geodesic_vectorize(gpu_index, pre_enc_inds, locs_float_, batch_offsets_,
         geo_dists[inst_inds, start:end] = geo_dist
     # geo_dists.append(geo_dist)
     return geo_dists
+
+
+@torch.no_grad()
+def cal_geodesic_vectorize2(gpu_index, query_inds, locs_float_, feats_, max_step=128, neighbor=64, radius=0.05, n_queries=128):
+    
+    # batch_size = pre_enc_inds.shape[0]
+    # geo_dists = []
+    # num_insts = len(proposals_batch_idxs_)
+    # geo_dists = torch.zeros((num_insts, batch_offsets_[-1]), dtype=torch.float32, device=locs_float_.device) - 1
+    # for b in range(batch_size):
+    #     start = batch_offsets_[b]
+    #     end = batch_offsets_[b+1]
+
+        # p_start = proposal_batch_offsets_[b]
+        # p_end = proposal_batch_offsets_[b+1]
+
+
+    # query_inds = pre_enc_inds[inst_inds].long() - start
+    locs_float_b = locs_float_
+    # print(locs_float_b.shape, query_inds.shape)
+
+    n_points = locs_float_b.shape[0]
+    n_queries = query_inds.shape[0]
+
+    distances_arr, indices_arr = find_knn(gpu_index, locs_float_b, neighbor=neighbor) # n_points, n_neighbor
+
+    # NOTE nearest neigbor is themself -> remove first element
+    distances_arr = distances_arr[:, 1:]
+    indices_arr = indices_arr[:, 1:]
+
+
+    feats_neighbor = feats_[indices_arr.flatten(), :].reshape(n_points, neighbor-1, -1)
+    # print(feats_neighbor.shape)
+    feats_extend = feats_[:, None, :].repeat(1, neighbor-1, 1 )
+    feats_sim_arr = F.cosine_similarity(feats_neighbor, feats_extend, dim=-1)
+
+    print('feats_sim', feats_sim_arr.shape, torch.mean(feats_neighbor), torch.mean(feats_extend), torch.mean(feats_sim_arr))
+
+    geo_dist = torch.zeros((n_queries, n_points), dtype=torch.float32, device=locs_float_.device) - 1
+    visited = torch.zeros((n_queries, n_points), dtype=torch.bool, device=locs_float_.device)
+
+
+    # print(start, end, locs_float_b.shape, geo_dist.shape)
+    
+    arange_tensor = torch.arange(0, n_queries, dtype=torch.long, device=locs_float_.device)
+
+    geo_dist[arange_tensor, query_inds] = 0.0
+    visited[arange_tensor, query_inds] = True
+        
+
+    distances, indices = distances_arr[query_inds], indices_arr[query_inds] # N_queries x n_neighbors
+    sim = feats_sim_arr[query_inds]
+
+    cond = (distances <= radius) & (indices >= 0) & (sim >= 0.99) # N_queries x n_neighbors
+
+    # print(cond.shape)
+    queries_inds, neighbors_inds = torch.nonzero(cond, as_tuple=True) # n_temp
+    points_inds = indices[queries_inds, neighbors_inds]  # n_temp
+    points_distances = distances[queries_inds, neighbors_inds]  # n_temp
+
+    for step in range(max_step):
+        # NOTE find unique indices for each query
+        stack_pointquery_inds = torch.stack([points_inds, queries_inds], dim=0)
+        _, unique_inds = unique_with_inds(stack_pointquery_inds)
+
+        points_inds = points_inds[unique_inds]
+        queries_inds = queries_inds[unique_inds]
+        points_distances = points_distances[unique_inds]
+
+        # NOTE update geodesic and visited look-up table
+        geo_dist[queries_inds, points_inds] = points_distances
+        visited[queries_inds, points_inds] = True
+
+        # NOTE get new neighbors
+        distances_new, indices_new = distances_arr[points_inds], indices_arr[points_inds] # n_temp x n_neighbors
+        sim_new = feats_sim_arr[points_inds]
+
+        distances_new_cumsum = distances_new + points_distances[:, None] # n_temp x n_neighbors
+
+        # NOTE trick to repeat queries indices for new neighbor
+        queries_inds = queries_inds[:, None].repeat(1, neighbor-1) # n_temp x n_neighbors
+
+        # NOTE condition: no visited and radius and indices
+        visited_cond = visited[queries_inds.flatten(), indices_new.flatten()].reshape(*distances_new.shape)
+        cond = (distances_new <= radius) & (indices_new >= 0) & (visited_cond == False) & (sim_new >= 0.99) # n_temp x n_neighbors
+
+        # NOTE filter
+        temp_inds, neighbors_inds = torch.nonzero(cond, as_tuple=True) # n_temp2
+        
+        if len(temp_inds) == 0: # no new points:
+            break
+
+        points_inds = indices_new[temp_inds, neighbors_inds]  # n_temp2
+        points_distances = distances_new_cumsum[temp_inds, neighbors_inds]  # n_temp2
+        queries_inds = queries_inds[temp_inds, neighbors_inds]  # n_temp2
+    
+    return geo_dist
