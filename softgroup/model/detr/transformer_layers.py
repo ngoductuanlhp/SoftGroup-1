@@ -86,6 +86,7 @@ class TransformerDecoder(nn.Module):
         # attns = []
 
         n_points = [1024, 1024, 2048, 2048, 4096, 4096]
+        # n_points = [1024, 2048, 2048, 4096, 4096, 8192]
         for l, layer in enumerate(self.layers):
             memory_ = memory[:n_points[l], ...]
             pos_ = pos[:n_points[l], ...]

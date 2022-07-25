@@ -317,16 +317,17 @@ class SoftGroup(nn.Module):
             query_locs = context_locs[:, :self.transformer_cfg.n_queries, :]
 
             # NOTE process geodist
-            geo_dists = cal_geodesic_vectorize(
-                self.geo_knn,
-                pre_enc_inds,
-                coords_float_,
-                batch_offsets_,
-                max_step=128 if self.training else 256,
-                neighbor=64,
-                radius=0.05,
-                n_queries=self.transformer_cfg.n_queries,
-            )
+            # geo_dists = cal_geodesic_vectorize(
+            #     self.geo_knn,
+            #     pre_enc_inds,
+            #     coords_float_,
+            #     batch_offsets_,
+            #     max_step=128 if self.training else 256,
+            #     neighbor=64,
+            #     radius=0.05,
+            #     n_queries=self.transformer_cfg.n_queries,
+            # )
+            geo_dists = None
 
             # NOTE transformer decoder
             dec_outputs = self.forward_decoder(context_locs, context_feats, query_locs, pc_dims, geo_dists, pre_enc_inds)
@@ -442,16 +443,17 @@ class SoftGroup(nn.Module):
             query_locs = context_locs[:, :self.transformer_cfg.n_queries, :]
 
             # NOTE process geodist
-            geo_dists = cal_geodesic_vectorize(
-                self.geo_knn,
-                pre_enc_inds,
-                coords_float_,
-                batch_offsets_,
-                max_step=128 if self.training else 256,
-                neighbor=64,
-                radius=0.05,
-                n_queries=self.transformer_cfg.n_queries,
-            )
+            # geo_dists = cal_geodesic_vectorize(
+            #     self.geo_knn,
+            #     pre_enc_inds,
+            #     coords_float_,
+            #     batch_offsets_,
+            #     max_step=128 if self.training else 256,
+            #     neighbor=64,
+            #     radius=0.05,
+            #     n_queries=self.transformer_cfg.n_queries,
+            # )
+            geo_dists = None
 
             # NOTE transformer decoder
             dec_outputs = self.forward_decoder(context_locs, context_feats, query_locs, pc_dims, geo_dists, pre_enc_inds)
@@ -621,37 +623,37 @@ class SoftGroup(nn.Module):
         relative_coords = torch.abs(query_locs[:,:,None,:] - context_locs[:,None,:,:])   # b x n_queries x n_contexts x 3
         n_queries, n_contexts = relative_coords.shape[1], relative_coords.shape[2]
 
-        geo_dist_context = []
-        for b in range(batch_size):
-            geo_dist_context_b = geo_dists[b][:, pre_enc_inds[b].long()]  # n_queries x n_contexts
-            geo_dist_context.append(geo_dist_context_b)
+        # geo_dist_context = []
+        # for b in range(batch_size):
+        #     geo_dist_context_b = geo_dists[b][:, pre_enc_inds[b].long()]  # n_queries x n_contexts
+        #     geo_dist_context.append(geo_dist_context_b)
 
-        geo_dist_context = torch.stack(geo_dist_context, dim=0)  # b x n_queries x n_contexts
-        max_geo_dist_context = torch.max(geo_dist_context, dim=2)[0]  # b x n_queries
-        max_geo_val = torch.max(max_geo_dist_context)
-        max_geo_dist_context[max_geo_dist_context < 0] = max_geo_val  # NOTE assign very big value to invalid queries
+        # geo_dist_context = torch.stack(geo_dist_context, dim=0)  # b x n_queries x n_contexts
+        # max_geo_dist_context = torch.max(geo_dist_context, dim=2)[0]  # b x n_queries
+        # max_geo_val = torch.max(max_geo_dist_context)
+        # max_geo_dist_context[max_geo_dist_context < 0] = max_geo_val  # NOTE assign very big value to invalid queries
 
-        max_geo_dist_context = max_geo_dist_context[:, :, None, None].expand(
-            batch_size, n_queries, n_contexts, 3
-        )  # b x n_queries x n_contexts x 3
+        # max_geo_dist_context = max_geo_dist_context[:, :, None, None].expand(
+        #     batch_size, n_queries, n_contexts, 3
+        # )  # b x n_queries x n_contexts x 3
 
-        geo_dist_context = geo_dist_context[:, :, :, None].repeat(1, 1, 1, 3)
+        # geo_dist_context = geo_dist_context[:, :, :, None].repeat(1, 1, 1, 3)
 
-        cond = geo_dist_context < 0
-        geo_dist_context[cond] = max_geo_dist_context[cond] + relative_coords[cond]
+        # cond = geo_dist_context < 0
+        # geo_dist_context[cond] = max_geo_dist_context[cond] + relative_coords[cond]
 
-        relative_embedding_pos = self.pos_embedding(
-            geo_dist_context.reshape(batch_size, n_queries * n_contexts, -1), input_range=pc_dims
-        ).reshape(
-            batch_size,
-            -1,
-            n_queries,
-            n_contexts,
-        )
-        relative_embedding_pos = relative_embedding_pos.permute(2, 3, 0, 1)
+        # relative_embedding_pos = self.pos_embedding(
+        #     geo_dist_context.reshape(batch_size, n_queries * n_contexts, -1), input_range=pc_dims
+        # ).reshape(
+        #     batch_size,
+        #     -1,
+        #     n_queries,
+        #     n_contexts,
+        # )
+        # relative_embedding_pos = relative_embedding_pos.permute(2, 3, 0, 1)
 
-        # relative_embedding_pos = self.pos_embedding(relative_coords.reshape(batch_size, n_queries*n_contexts, -1), input_range=input_range).reshape(batch_size, -1, n_queries, n_contexts,)
-        # relative_embedding_pos   = relative_embedding_pos.permute(2,3,0,1) # n_queries, n_context, batch, channel
+        relative_embedding_pos = self.pos_embedding(relative_coords.reshape(batch_size, n_queries*n_contexts, -1), input_range=input_range).reshape(batch_size, -1, n_queries, n_contexts,)
+        relative_embedding_pos   = relative_embedding_pos.permute(2,3,0,1) # n_queries, n_context, batch, channel
 
         # num_layers x n_queries x batch x channel
         dec_outputs = self.decoder(
