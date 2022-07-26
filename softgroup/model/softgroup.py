@@ -95,11 +95,20 @@ class SoftGroup(nn.Module):
 
         ''' Set aggregate '''
         set_aggregate_dim_out = 2 * self.channels
-        mlp_dims = [self.channels, 2*self.channels, 2*self.channels, set_aggregate_dim_out]
-        self.set_aggregator = PointnetSAModuleVotesSeparate(
+        mlp_dims = [self.channels, 2*self.channels, 2*self.channels, 2*self.channels]
+        self.set_aggregator = PointnetSAModuleVotes(
             radius=0.2,
             nsample=64,
             npoint=transformer_cfg.n_context_points,
+            mlp=mlp_dims,
+            normalize_xyz=True,
+        )
+
+        mlp_dims = [2*self.channels, 2*self.channels, 2*self.channels, set_aggregate_dim_out]
+        self.set_aggregator2 = PointnetSAModuleVotes(
+            radius=0.4,
+            nsample=16,
+            npoint=transformer_cfg.n_context_points//4,
             mlp=mlp_dims,
             normalize_xyz=True,
         )
@@ -291,13 +300,13 @@ class SoftGroup(nn.Module):
 
             mask_features  = self.mask_tower(torch.unsqueeze(output_feats, dim=2).permute(2,1,0)).permute(2,1,0)
 
-            semantic_scores_inst_cls = F.softmax(semantic_scores[:, self.label_shift:], dim=-1)
+            # semantic_scores_inst_cls = F.softmax(semantic_scores[:, self.label_shift:], dim=-1)
 
             semantic_scores_pred = torch.argmax(semantic_scores, dim=1) # N_points
 
 
-            # object_conditions = (semantic_scores_pred >= 2)
-            object_conditions = torch.any((semantic_scores_inst_cls >= self.grouping_cfg.sem_inst_cls_thresh), dim=-1)
+            object_conditions = (semantic_scores_pred >= 2)
+            # object_conditions = torch.any((semantic_scores_inst_cls >= self.grouping_cfg.sem_inst_cls_thresh), dim=-1)
             object_idxs = torch.nonzero(object_conditions).view(-1)
 
             batch_idxs_ = batch_idxs[object_idxs]
@@ -421,13 +430,13 @@ class SoftGroup(nn.Module):
             batch_offsets = self.get_batch_offsets(batch_idxs, batch_size)
             mask_features  = self.mask_tower(torch.unsqueeze(output_feats, dim=2).permute(2,1,0)).permute(2,1,0)
 
-            semantic_scores_inst_cls = F.softmax(semantic_scores[:, self.label_shift:], dim=-1)
+            # semantic_scores_inst_cls = F.softmax(semantic_scores[:, self.label_shift:], dim=-1)
 
             semantic_scores_pred = torch.argmax(semantic_scores, dim=1) # N_points
 
 
-            # object_conditions = (semantic_scores_pred >= 2)
-            object_conditions = torch.any((semantic_scores_inst_cls >= self.grouping_cfg.sem_inst_cls_thresh), dim=-1)
+            object_conditions = (semantic_scores_pred >= 2)
+            # object_conditions = torch.any((semantic_scores_inst_cls >= self.grouping_cfg.sem_inst_cls_thresh), dim=-1)
             object_idxs = torch.nonzero(object_conditions).view(-1)
 
             batch_idxs_ = batch_idxs[object_idxs]
@@ -442,10 +451,12 @@ class SoftGroup(nn.Module):
             contexts = self.forward_aggregator(coords_float_, output_feats_, pt_offsets_, pt_offsets_vertices_, batch_offsets_, batch_size, pre_enc_inds=None)
             context_locs, context_boxes, context_centroid, context_feats, pre_enc_inds = contexts
 
+
             # NOTE get queries
             query_locs = context_locs[:, :self.transformer_cfg.n_queries, :]
             query_boxes = context_boxes[:, :self.transformer_cfg.n_queries, :]
             query_centroid = context_centroid[:, :self.transformer_cfg.n_queries, :]
+
 
             # NOTE process geodist
             # geo_dists = cal_geodesic_vectorize(
@@ -547,8 +558,9 @@ class SoftGroup(nn.Module):
         context_locs = []
         context_boxes = []
         context_centroid = []
-        grouped_features = []
-        grouped_xyz = []
+        context_feats = []
+        # grouped_features = []
+        # grouped_xyz = []
         pre_enc_inds = []
 
         for b in range(batch_size):
@@ -561,31 +573,49 @@ class SoftGroup(nn.Module):
             if batch_points == 0:
                 return None
             
-            context_locs_b, grouped_features_b, grouped_xyz_b, pre_enc_inds_b = self.set_aggregator.group_points(locs_float_b.contiguous(), 
-                                                                    output_feats_b.transpose(1,2).contiguous())
+            context_locs_b, context_feats_b, context_inds_b = self.set_aggregator(locs_float_b.contiguous(), 
+                                                                                output_feats_b.transpose(1,2).contiguous())
+
+            
+            context_locs_b, context_feats_b, context_inds_b = self.set_aggregator2(context_locs_b, 
+                                                                                context_feats_b)    
+
+            context_feats_b = context_feats_b.transpose(1,2)    
+
+            # if torch.any(torch.isnan(context_locs_b)):
+            #     breakpoint()   
+
+            # if torch.any(torch.isnan(context_feats_b)):
+            #     breakpoint()       
+
+            # context_locs_b, grouped_features_b, grouped_xyz_b, pre_enc_inds_b = self.set_aggregator.group_points(locs_float_b.contiguous(), 
+            #                                                         output_feats_b.transpose(1,2).contiguous())
 
             # context_boxes_b = pt_offsets_vertices_[start:end, :][pre_enc_inds_b[0].long(), :].unsqueeze(0) + context_locs_b.repeat(1,1,2)
-            temp = pt_offsets_vertices_[start:end, :][pre_enc_inds_b[0].long(), :].unsqueeze(0) # 1, N, 6
+            temp = pt_offsets_vertices_[start:end, :][context_inds_b[0].long(), :].unsqueeze(0) # 1, N, 6
             context_boxes_b = temp[:,:,3:] - temp[:,:,:3]
 
-            context_centroid_b = pt_offsets_[start:end, :][pre_enc_inds_b[0].long(), :].unsqueeze(0) + context_locs_b
+            context_centroid_b = pt_offsets_[start:end, :][context_inds_b[0].long(), :].unsqueeze(0) + context_locs_b
 
             context_locs.append(context_locs_b)
             context_boxes.append(context_boxes_b)
             context_centroid.append(context_centroid_b)
-            grouped_features.append(grouped_features_b)
-            grouped_xyz.append(grouped_xyz_b)
-            pre_enc_inds.append(pre_enc_inds_b)
+
+            context_feats.append(context_feats_b)
+            # grouped_features.append(grouped_features_b)
+            # grouped_xyz.append(grouped_xyz_b)
+            pre_enc_inds.append(context_inds_b)
 
         context_locs = torch.cat(context_locs)
         context_boxes = torch.cat(context_boxes)
         context_centroid = torch.cat(context_centroid)
-        grouped_features = torch.cat(grouped_features)
-        grouped_xyz = torch.cat(grouped_xyz)
+        context_feats = torch.cat(context_feats)
+        # grouped_features = torch.cat(grouped_features)
+        # grouped_xyz = torch.cat(grouped_xyz)
         pre_enc_inds = torch.cat(pre_enc_inds)
 
-        context_feats = self.set_aggregator.mlp(grouped_features, grouped_xyz)
-        context_feats = context_feats.transpose(1,2)
+        # context_feats = self.set_aggregator.mlp(grouped_features, grouped_xyz)
+        # context_feats = context_feats.transpose(1,2)
 
         return context_locs, context_boxes, context_centroid, context_feats, pre_enc_inds
         
