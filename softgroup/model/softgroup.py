@@ -7,8 +7,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-import faiss  # make faiss available
-import faiss.contrib.torch_utils
+# import faiss  # make faiss available
+# import faiss.contrib.torch_utils
 
 from ..ops import (ballquery_batch_p, ballquery_batch_p_boxiou, bfs_cluster, get_mask_iou_on_cluster, get_mask_iou_on_pred,
                    get_mask_label, global_avg_pool, sec_max, sec_min, voxelization,
@@ -168,7 +168,7 @@ class SoftGroup(nn.Module):
             decoder_layer, num_layers=transformer_cfg.dec_nlayers, return_intermediate=True
         )
 
-        self.init_knn()
+        # self.init_knn()
         self.init_weights()
 
         for mod in fixed_modules:
@@ -182,12 +182,12 @@ class SoftGroup(nn.Module):
             self.freeze_backbone = False
         # self.freeze_backbone = False
 
-    def init_knn(self):
-        faiss_cfg = faiss.GpuIndexFlatConfig()
-        faiss_cfg.useFloat16 = True
-        faiss_cfg.device = 0
+    # def init_knn(self):
+    #     faiss_cfg = faiss.GpuIndexFlatConfig()
+    #     faiss_cfg.useFloat16 = True
+    #     faiss_cfg.device = 0
 
-        self.geo_knn = faiss.GpuIndexFlatL2(faiss.StandardGpuResources(), 3, faiss_cfg)
+    #     self.geo_knn = faiss.GpuIndexFlatL2(faiss.StandardGpuResources(), 3, faiss_cfg)
 
     def init_dyco(self):
         ################################
