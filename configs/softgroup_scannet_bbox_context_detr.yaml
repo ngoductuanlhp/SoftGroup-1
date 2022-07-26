@@ -8,14 +8,15 @@ model:
   ignore_label: -100
   transformer_cfg:
     n_context_points: 4096
-    n_queries: 96
+    n_queries: 192
     dec_dim: 64
     dec_ffn_dim: 256
     dec_nhead: 8
     dec_nlayers: 6
-    n_subsample: 20000
+    n_subsample: 50000
 
   grouping_cfg:
+    sem_inst_cls_thresh: 0.2
     iou_thresh: 0.2
     score_thr: 0.2
     radius: 0.04
@@ -72,7 +73,7 @@ data:
 
 dataloader:
   train:
-    batch_size: 7
+    batch_size: 8
     num_workers: 4
   test:
     batch_size: 1
@@ -90,8 +91,8 @@ save_cfg:
   nmc_clusters: False
 
 fp16: True
-epochs: 40
+epochs: 50
 step_epoch: 25
 save_freq: 4
-pretrain: 'pretrains/best_detr_mask.pth'
+pretrain: 'pretrains/best_pretrain_bbox_context_iou_conf_no_coord_embed.pth'
 work_dir: ''
