@@ -40,7 +40,7 @@ class CustomDataset(Dataset):
             self.filenames = self.filenames[::10]
         self.logger.info(f'Load {self.mode} dataset: {len(self.filenames)} scans')
 
-        # self.filenames = self.filenames[:10]
+        # self.filenames = self.filenames[:50]
 
     def get_filenames(self):
         filenames = glob(osp.join(self.data_root, self.prefix, '*' + self.suffix))
@@ -172,7 +172,7 @@ class CustomDataset(Dataset):
             j += 1
         return instance_label
 
-    def transform_train(self, xyz, rgb, semantic_label, instance_label, aug_prob=1.0):
+    def transform_train(self, xyz, rgb, semantic_label, instance_label, spp, aug_prob=1.0):
         xyz_middle = self.dataAugment(xyz, True, True, True, aug_prob)
         xyz = xyz_middle * self.voxel_cfg.scale
         if np.random.rand() < aug_prob:
@@ -196,24 +196,30 @@ class CustomDataset(Dataset):
         rgb = rgb[valid_idxs]
         semantic_label = semantic_label[valid_idxs]
         instance_label = self.getCroppedInstLabel(instance_label, valid_idxs)
-        return xyz, xyz_middle, rgb, semantic_label, instance_label
 
-    def transform_test(self, xyz, rgb, semantic_label, instance_label):
+        spp = spp[valid_idxs]
+        return xyz, xyz_middle, rgb, semantic_label, instance_label, spp
+
+    def transform_test(self, xyz, rgb, semantic_label, instance_label, spp):
         xyz_middle = self.dataAugment(xyz, False, False, False)
         xyz = xyz_middle * self.voxel_cfg.scale
         xyz -= xyz.min(0)
         valid_idxs = np.ones(xyz.shape[0], dtype=bool)
         instance_label = self.getCroppedInstLabel(instance_label, valid_idxs)
-        return xyz, xyz_middle, rgb, semantic_label, instance_label
+        return xyz, xyz_middle, rgb, semantic_label, instance_label, spp
 
     def __getitem__(self, index):
         filename = self.filenames[index]
         scan_id = osp.basename(filename).replace(self.suffix, '')
-        data = self.load(filename)
-        data = self.transform_train(*data) if self.training else self.transform_test(*data)
+        xyz, rgb, semantic_label, instance_label = self.load(filename)
+
+        spp_filename = osp.join('dataset/scannetv2/superpoints', scan_id+'.pth')
+        spp = self.load(spp_filename)
+
+        data = self.transform_train(xyz, rgb, semantic_label, instance_label, spp) if self.training else self.transform_test(xyz, rgb, semantic_label, instance_label, spp)
         if data is None:
             return None
-        xyz, xyz_middle, rgb, semantic_label, instance_label = data
+        xyz, xyz_middle, rgb, semantic_label, instance_label, spp = data
         info = self.getInstanceInfo(xyz_middle, instance_label.astype(np.int32), semantic_label)
         inst_num, inst_pointnum, inst_cls, inst_box, pt_offset_label, pt_offset_vertices_label = info
         coord = torch.from_numpy(xyz).long()
@@ -226,6 +232,8 @@ class CustomDataset(Dataset):
         pt_offset_label = torch.from_numpy(pt_offset_label)
         pt_offset_vertices_label = torch.from_numpy(pt_offset_vertices_label)
 
+        # spp = torch.from_numpy(spp)
+
         inst_box = torch.from_numpy(inst_box)
 
         # NOTE debug
@@ -236,7 +244,7 @@ class CustomDataset(Dataset):
         # assert torch.all(sem_inds >= 2)
 
 
-        return (scan_id, coord, coord_float, feat, semantic_label, instance_label, inst_num,
+        return (scan_id, coord, coord_float, feat, semantic_label, instance_label, spp, inst_num,
                 inst_pointnum, inst_cls, inst_box, pt_offset_label, pt_offset_vertices_label)
 
     def collate_fn(self, batch):
@@ -246,6 +254,8 @@ class CustomDataset(Dataset):
         feats = []
         semantic_labels = []
         instance_labels = []
+
+        spps = []
 
         instance_pointnum = []  # (total_nInst), int
         instance_cls = []  # (total_nInst), long
@@ -265,7 +275,7 @@ class CustomDataset(Dataset):
         for data in batch:
             if data is None:
                 continue
-            (scan_id, coord, coord_float, feat, semantic_label, instance_label, inst_num,
+            (scan_id, coord, coord_float, feat, semantic_label, instance_label, spp, inst_num,
              inst_pointnum, inst_cls, inst_box, pt_offset_label, pt_offset_vertices_label) = data
             instance_label[np.where(instance_label != -100)] += total_inst_num
             total_inst_num += inst_num
@@ -275,6 +285,8 @@ class CustomDataset(Dataset):
             feats.append(feat)
             semantic_labels.append(semantic_label)
             instance_labels.append(instance_label)
+            spps.append(spp)
+
             instance_pointnum.extend(inst_pointnum)
             instance_cls.extend(inst_cls)
             instance_box.append(inst_box)
@@ -297,6 +309,8 @@ class CustomDataset(Dataset):
         feats = torch.cat(feats, 0)  # float (N, C)
         semantic_labels = torch.cat(semantic_labels, 0).long()  # long (N)
         instance_labels = torch.cat(instance_labels, 0).long()  # long (N)
+        spps = torch.cat(spps, 0).long()
+
         instance_pointnum = torch.tensor(instance_pointnum, dtype=torch.int)  # int (total_nInst)
         instance_cls = torch.tensor(instance_cls, dtype=torch.long)  # long (total_nInst)
         instance_box = torch.cat(instance_box, dim=0).float() # (total_nInst, 6)
@@ -309,6 +323,7 @@ class CustomDataset(Dataset):
 
         pc_dims = torch.stack([pc_mins, pc_maxs], dim=0) # 2, batch, 3
 
+        # spatial_shape = np.array([768, 768, 400])
         spatial_shape = np.clip(
             coords.max(0)[0][1:].numpy() + 1, self.voxel_cfg.spatial_shape[0], None)
         voxel_coords, v2p_map, p2v_map = voxelization_idx(coords, batch_id)
@@ -324,6 +339,7 @@ class CustomDataset(Dataset):
             'feats': feats,
             'semantic_labels': semantic_labels,
             'instance_labels': instance_labels,
+            'spps': spps,
             'instance_pointnum': instance_pointnum,
             'instance_cls': instance_cls,
             'instance_box': instance_box,

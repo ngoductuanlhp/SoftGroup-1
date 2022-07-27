@@ -7,12 +7,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
+
 from ..ops import (ballquery_batch_p, bfs_cluster, get_mask_iou_on_cluster, get_mask_iou_on_pred,
                    get_mask_label, global_avg_pool, sec_max, sec_min, voxelization,
                    voxelization_idx)
 from ..util import cuda_cast, force_fp32, rle_encode
 from .blocks import MLP, ResidualBlock, UBlock, PositionalEmbedding
 
+
+try:
+    import torch_scatter
+except:
+    print('cannot import torch_scatter')
 
 def non_max_suppression_gpu(proposals_pred, scores, threshold):
     proposals_pred = proposals_pred.float()  # (nProposal, N), float, cuda
@@ -484,8 +490,16 @@ def non_maximum_cluster2(box_conf, coords, pt_offsets, pt_offsets_vertices, batc
 
 
 
+def superpoint_align(spp, proposals_pred):
+    n_inst, n_points = proposals_pred.shape[:2]
+    spp_unique, spp_ids, spp_len = torch.unique(spp, return_inverse=True, return_counts=True)
+    n_spp = spp_unique.shape[0]
+    sum_spp_inst = torch_scatter.scatter(proposals_pred, spp_ids.expand(n_inst, n_points), dim=-1, reduce='sum') # n_inst, n_spp
+    spp_mask = (2 * sum_spp_inst >= spp_len[None, :]) # n_inst, n_spp
 
-
+    refine_proposals_pred = torch.gather(spp_mask, dim=-1, index=spp_ids.expand(n_inst, n_points))
+    
+    return refine_proposals_pred
         
 
 

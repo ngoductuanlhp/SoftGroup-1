@@ -105,7 +105,6 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
         for i, batch in enumerate(val_loader):
             with torch.cuda.amp.autocast(enabled=cfg.fp16):
                 result = model(batch)
-
             if isinstance(result, list):
                 results.extend(result)
             else:

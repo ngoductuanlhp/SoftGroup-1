@@ -5,7 +5,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-
+import torch_scatter
 
 # import faiss  # make faiss available
 # import faiss.contrib.torch_utils
@@ -15,7 +15,7 @@ from ..ops import (ballquery_batch_p, ballquery_batch_p_boxiou, bfs_cluster, get
                    voxelization_idx)
 from ..util import cuda_cast, force_fp32, rle_encode
 from .blocks import MLP, ResidualBlock, UBlock, PositionalEmbedding, conv_with_kaiming_uniform
-from .model_utils import giou_aabb, iou_aabb, compute_dice_loss, sigmoid_focal_loss, non_maximum_cluster, non_maximum_cluster2, non_max_suppression_gpu
+from .model_utils import giou_aabb, iou_aabb, compute_dice_loss, sigmoid_focal_loss, non_maximum_cluster, non_maximum_cluster2, non_max_suppression_gpu, superpoint_align
 # from ..pointnet2 import pointnet2_utils
 from .geodesic_utils import cal_geodesic_vectorize_batch, cal_geodesic_vectorize
 from softgroup.pointnet2.pointnet2_utils import furthest_point_sample
@@ -398,7 +398,7 @@ class SoftGroup(nn.Module):
 
     @cuda_cast
     def forward_test(self, batch_idxs, voxel_coords, p2v_map, v2p_map, coords_float, feats,
-                      semantic_labels, instance_labels, instance_pointnum, instance_cls,
+                      semantic_labels, instance_labels, spps, instance_pointnum, instance_cls,
                       pt_offset_labels, pt_offset_vertices_labels, spatial_shape, batch_size, pc_dims, scan_ids, **kwargs):
 
         # if self.embedding_coord:
@@ -420,24 +420,23 @@ class SoftGroup(nn.Module):
         batch_offsets = self.get_batch_offsets(batch_idxs, batch_size)
         
 
-        ret_arr = []
+        ret_arr = [dict() for _ in range(batch_size)]
         for b in range(batch_size):
             start, end = batch_offsets[b], batch_offsets[b+1]
-            ret = dict(
+            ret_arr[b].update(
                 scan_id=scan_ids[b],
                 coords_float=coords_float[start:end].cpu().numpy(),
                 semantic_labels=semantic_labels[start:end].cpu().numpy(),
                 instance_labels=instance_labels[start:end].cpu().numpy())
 
             if self.semantic_only:
-                ret.update(
+                ret_arr[b].update(
                     semantic_preds=semantic_preds[start:end].cpu().numpy(),
                     offset_preds=pt_offsets[start:end].cpu().numpy(),
                     offset_vertices_preds=pt_offsets_vertices[start:end].cpu().numpy(),
                     offset_labels=pt_offset_labels[start:end].cpu().numpy(),
                 )
 
-            ret_arr.append(ret)
 
         if not self.semantic_only:
            
@@ -495,8 +494,8 @@ class SoftGroup(nn.Module):
             cls_logits_layers, mask_logits_layers, conf_logits_layers = self.forward_head(dec_outputs, mask_features_, coords_float_, query_locs, batch_offsets_)
 
 
-            pred_instances_arr = self.get_instance(scan_ids, mask_logits_layers[-1], cls_logits_layers[-1], conf_logits_layers[-1], object_idxs, batch_offsets, batch_offsets_, semantic_scores_, batch_size,\
-                                                 logit_thresh=0.5, score_thresh=0.1, npoint_thresh=100)
+            pred_instances_arr = self.get_instance(scan_ids, mask_logits_layers[-1], cls_logits_layers[-1], conf_logits_layers[-1], object_idxs, batch_offsets, batch_offsets_, semantic_scores_, spps, batch_size,\
+                                                 logit_thresh=0.5, score_thresh=0.2, npoint_thresh=100)
 
             gt_instances_arr = self.get_gt_instances(semantic_labels, instance_labels, batch_offsets, batch_size)
 
@@ -508,7 +507,7 @@ class SoftGroup(nn.Module):
             #                                    proposals_offset, instance_labels, instance_pointnum,
             #                                    instance_cls)
             # ret.update(dict(debug_accu=debug_accu.cpu().numpy()))
-        return ret
+        return ret_arr
 
     def forward_backbone(self, input, input_map, x4_split=False):
 
@@ -828,7 +827,7 @@ class SoftGroup(nn.Module):
 
         return x
 
-    def get_instance(self, scan_ids, mask_logits, cls_logits, conf_logits, object_idxs, batch_offsets, batch_offsets_, semantic_scores_, batch_size, logit_thresh=0.5, score_thresh=0.1, npoint_thresh=100):
+    def get_instance(self, scan_ids, mask_logits, cls_logits, conf_logits, object_idxs, batch_offsets, batch_offsets_, semantic_scores_, spps, batch_size, logit_thresh=0.5, score_thresh=0.1, npoint_thresh=100):
 
         semantic_scores_ = F.softmax(semantic_scores_,dim=1)
         # cls_logits_pred = cls_logits.max(2)[1] # batch x n_queries x 1 
@@ -841,6 +840,8 @@ class SoftGroup(nn.Module):
             start   = batch_offsets[b]
             end     = batch_offsets[b+1]
             num_points = end - start
+
+            spp_b = spps[start:end]
 
             mask_logit_b = mask_logits[b].sigmoid() # n_mask, n_points
             cls_logits_b = F.softmax(cls_logits[b], dim=-1)
@@ -904,15 +905,20 @@ class SoftGroup(nn.Module):
 
             proposals_pred[inst_inds, point_inds] = 1
 
+
+            # NOTE superpoint refinement
+            proposals_pred = superpoint_align(spp_b, proposals_pred)
+            
             pick_idxs = non_max_suppression_gpu(proposals_pred, scores_final, threshold=0.2)  # int, (nCluster, N)
 
-            proposals_pred = proposals_pred[pick_idxs].cpu().numpy()
-            scores_final = scores_final[pick_idxs].cpu().numpy()
-            cls_final = cls_final[pick_idxs].cpu().numpy()
+            proposals_pred = proposals_pred[pick_idxs]
+            scores_final = scores_final[pick_idxs]
+            cls_final = cls_final[pick_idxs]
 
-            # proposals_pred = proposals_pred.cpu().numpy()
-            # scores_final = scores_final.cpu().numpy()
-            # cls_final = cls_final.cpu().numpy()
+
+            proposals_pred = proposals_pred.cpu().numpy()
+            scores_final = scores_final.cpu().numpy()
+            cls_final = cls_final.cpu().numpy()
 
             
             for i in range(cls_final.shape[0]):

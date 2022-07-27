@@ -75,6 +75,7 @@ dataset/scannetv2/trainsmall_gt
 dataset/scannetv2/scannetv2-labels.combined.tsv
 dataset/scannetv2/points
 dataset/scannetv2/graph
+dataset/scannetv2/superpoints
 # dataset/scannetv2
 
 dataset/s3dis/preprocess
