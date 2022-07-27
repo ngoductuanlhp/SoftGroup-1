@@ -108,7 +108,10 @@ def main():
 
             with torch.cuda.amp.autocast(enabled=cfg.fp16):
                 result = model(batch)
-            results.append(result)
+            if isinstance(result, list):
+                results.extend(result)
+            else:
+                results.append(result)
 
             # if i % 10 == 0:
             logger.info(f'Infer scene {i+1}/{len(dataloader)}')

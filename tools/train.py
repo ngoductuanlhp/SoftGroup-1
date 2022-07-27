@@ -105,7 +105,10 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
         for i, batch in enumerate(val_loader):
             with torch.cuda.amp.autocast(enabled=cfg.fp16):
                 result = model(batch)
-            results.append(result)
+            if isinstance(result, list):
+                results.extend(result)
+            else:
+                results.append(result)
             progress_bar.update(world_size)
         progress_bar.close()
         results = collect_results_gpu(results, len(val_set))
@@ -113,20 +116,9 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
     if is_main_process():
         point_eval = PointWiseEval()
         for res in results:
-            # all_sem_preds.append(res['semantic_preds'])
-            # all_sem_labels.append(res['semantic_labels'])
-            # all_offset_preds.append(res['offset_preds'])
-            # all_offset_labels.append(res['offset_labels'])
-            # all_inst_labels.append(res['instance_labels'])
-            point_eval.update(res['semantic_preds'], res['offset_preds'], res['semantic_labels'], res['offset_labels'], res['instance_labels'])
-            if not cfg.model.semantic_only:
-
-                # for pred in res['pred_instances']:
-                #     label_id = pred['label_id']
-
-                    # print(label_id)
-                    # if isinstance(pred, list):
-                    #     breakpoint()
+            if cfg.model.semantic_only:
+                point_eval.update(res['semantic_preds'], res['offset_preds'], res['semantic_labels'], res['offset_labels'], res['instance_labels'])
+            else:
                 all_pred_insts.append(res['pred_instances'])
                 all_gt_insts.append(res['gt_instances'])
                 coords.append(res['coords_float'])
@@ -242,7 +234,7 @@ def main():
     global best_metric
     best_metric = 0
 
-    # validate(0, model, optimizer, val_loader, cfg, logger, writer)
+    validate(0, model, optimizer, val_loader, cfg, logger, writer)
 
     for epoch in range(start_epoch, cfg.epochs + 1):
         train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer)

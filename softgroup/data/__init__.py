@@ -37,7 +37,7 @@ def build_dataloader(dataset, batch_size=1, num_workers=1, training=True, dist=F
             drop_last=True,
             pin_memory=True)
     else:
-        assert batch_size == 1
+        # assert batch_size == 1
         return DataLoader(
             dataset,
             batch_size=batch_size,
