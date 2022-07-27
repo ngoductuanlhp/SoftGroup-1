@@ -104,14 +104,14 @@ class SoftGroup(nn.Module):
             normalize_xyz=True,
         )
 
-        mlp_dims = [2*self.channels, 2*self.channels, 2*self.channels, set_aggregate_dim_out]
-        self.set_aggregator2 = PointnetSAModuleVotes(
-            radius=0.4,
-            nsample=16,
-            npoint=transformer_cfg.n_context_points//4,
-            mlp=mlp_dims,
-            normalize_xyz=True,
-        )
+        # mlp_dims = [2*self.channels, 2*self.channels, 2*self.channels, set_aggregate_dim_out]
+        # self.set_aggregator2 = PointnetSAModuleVotes(
+        #     radius=0.4,
+        #     nsample=16,
+        #     npoint=transformer_cfg.n_context_points//4,
+        #     mlp=mlp_dims,
+        #     normalize_xyz=True,
+        # )
 
         ''' Position embedding '''
         self.pos_embedding = PositionEmbeddingCoordsSine(
@@ -300,13 +300,13 @@ class SoftGroup(nn.Module):
 
             mask_features  = self.mask_tower(torch.unsqueeze(output_feats, dim=2).permute(2,1,0)).permute(2,1,0)
 
-            # semantic_scores_inst_cls = F.softmax(semantic_scores[:, self.label_shift:], dim=-1)
+            semantic_scores_inst_cls = F.softmax(semantic_scores[:, self.label_shift:], dim=-1)
 
             semantic_scores_pred = torch.argmax(semantic_scores, dim=1) # N_points
 
 
-            object_conditions = (semantic_scores_pred >= 2)
-            # object_conditions = torch.any((semantic_scores_inst_cls >= self.grouping_cfg.sem_inst_cls_thresh), dim=-1)
+            # object_conditions = (semantic_scores_pred >= 2)
+            object_conditions = torch.any((semantic_scores_inst_cls >= self.grouping_cfg.sem_inst_cls_thresh), dim=-1)
             object_idxs = torch.nonzero(object_conditions).view(-1)
 
             batch_idxs_ = batch_idxs[object_idxs]
@@ -401,10 +401,10 @@ class SoftGroup(nn.Module):
                       semantic_labels, instance_labels, instance_pointnum, instance_cls,
                       pt_offset_labels, pt_offset_vertices_labels, spatial_shape, batch_size, pc_dims, scan_ids, **kwargs):
 
-        if self.embedding_coord:
-            feats = torch.cat((feats, self.pos_embed(coords_float)), 1)
-        else:
-            feats = torch.cat((feats, coords_float), 1)
+        # if self.embedding_coord:
+        #     feats = torch.cat((feats, self.pos_embed(coords_float)), 1)
+        # else:
+        feats = torch.cat((feats, coords_float), 1)
         # feats = torch.cat((feats, coords_float), 1)
         voxel_feats = voxelization(feats, p2v_map)
         input = spconv.SparseConvTensor(voxel_feats, voxel_coords.int(), spatial_shape, batch_size)
@@ -430,13 +430,13 @@ class SoftGroup(nn.Module):
             batch_offsets = self.get_batch_offsets(batch_idxs, batch_size)
             mask_features  = self.mask_tower(torch.unsqueeze(output_feats, dim=2).permute(2,1,0)).permute(2,1,0)
 
-            # semantic_scores_inst_cls = F.softmax(semantic_scores[:, self.label_shift:], dim=-1)
+            semantic_scores_inst_cls = F.softmax(semantic_scores[:, self.label_shift:], dim=-1)
 
             semantic_scores_pred = torch.argmax(semantic_scores, dim=1) # N_points
 
 
-            object_conditions = (semantic_scores_pred >= 2)
-            # object_conditions = torch.any((semantic_scores_inst_cls >= self.grouping_cfg.sem_inst_cls_thresh), dim=-1)
+            # object_conditions = (semantic_scores_pred >= 2)
+            object_conditions = torch.any((semantic_scores_inst_cls >= self.grouping_cfg.sem_inst_cls_thresh), dim=-1)
             object_idxs = torch.nonzero(object_conditions).view(-1)
 
             batch_idxs_ = batch_idxs[object_idxs]
@@ -577,8 +577,8 @@ class SoftGroup(nn.Module):
                                                                                 output_feats_b.transpose(1,2).contiguous())
 
             
-            context_locs_b, context_feats_b, context_inds_b = self.set_aggregator2(context_locs_b, 
-                                                                                context_feats_b)    
+            # context_locs_b, context_feats_b, context_inds_b = self.set_aggregator2(context_locs_b, 
+            #                                                                     context_feats_b)    
 
             context_feats_b = context_feats_b.transpose(1,2)    
 
