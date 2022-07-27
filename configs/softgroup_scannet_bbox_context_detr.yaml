@@ -16,7 +16,7 @@ model:
     n_subsample: 30000
 
   grouping_cfg:
-    sem_inst_cls_thresh: 0.3
+    sem_inst_cls_thresh: 0.2
     iou_thresh: 0.2
     score_thr: 0.2
     radius: 0.04
@@ -76,8 +76,8 @@ dataloader:
     batch_size: 8
     num_workers: 4
   test:
-    batch_size: 1
-    num_workers: 1
+    batch_size: 4
+    num_workers: 4
 
 optimizer:
   type: 'Adam'
