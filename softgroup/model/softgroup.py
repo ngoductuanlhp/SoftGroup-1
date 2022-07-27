@@ -94,11 +94,11 @@ class SoftGroup(nn.Module):
         # NOTE transformer decoder
 
         ''' Set aggregate '''
-        set_aggregate_dim_out = 2 * self.channels
-        mlp_dims = [self.channels, 2*self.channels, 2*self.channels, 2*self.channels]
+        set_aggregate_dim_out = 4 * self.channels
+        mlp_dims = [self.channels, 2*self.channels, 2*self.channels, 4*self.channels, 4*self.channels]
         self.set_aggregator = PointnetSAModuleVotes(
-            radius=0.2,
-            nsample=64,
+            radius=0.3,
+            nsample=96,
             npoint=transformer_cfg.n_context_points,
             mlp=mlp_dims,
             normalize_xyz=True,
@@ -114,18 +114,18 @@ class SoftGroup(nn.Module):
         # )
 
         ''' Position embedding '''
-        self.pos_embedding = PositionEmbeddingCoordsSine(
-            d_pos=transformer_cfg.dec_dim, pos_type="fourier", normalize=True, d_in=(3+3+3)
-        )
+        # self.pos_embedding = PositionEmbeddingCoordsSine(
+        #     d_pos=transformer_cfg.dec_dim, pos_type="fourier", normalize=True, d_in=(3+3+3)
+        # )
 
-        self.query_projection = GenericMLP(
-            input_dim=transformer_cfg.dec_dim,
-            hidden_dims=[transformer_cfg.dec_dim],
-            output_dim=transformer_cfg.dec_dim,
-            use_conv=True,
-            output_use_activation=True,
-            hidden_use_bias=True,
-        )
+        # self.query_projection = GenericMLP(
+        #     input_dim=transformer_cfg.dec_dim,
+        #     hidden_dims=[transformer_cfg.dec_dim],
+        #     output_dim=transformer_cfg.dec_dim,
+        #     use_conv=True,
+        #     output_use_activation=True,
+        #     hidden_use_bias=True,
+        # )
 
         self.encoder_to_decoder_projection = GenericMLP(
             input_dim=set_aggregate_dim_out,
@@ -212,8 +212,8 @@ class SoftGroup(nn.Module):
         conv_block = conv_with_kaiming_uniform("BN", activation=True)
         before_embedding_tower = []
         for i in range(before_embedding_conv_num-1):
-            before_embedding_tower.append(conv_block(64, 64))
-        before_embedding_tower.append(conv_block(64, self.output_dim))
+            before_embedding_tower.append(conv_block(self.transformer_cfg.dec_dim, self.transformer_cfg.dec_dim))
+        before_embedding_tower.append(conv_block(self.transformer_cfg.dec_dim, self.transformer_cfg.dec_dim))
         self.add_module("before_embedding_tower", nn.Sequential(*before_embedding_tower))
 
         ### cond inst generate parameters for
@@ -238,7 +238,7 @@ class SoftGroup(nn.Module):
         self.weight_nums = weight_nums
         self.bias_nums = bias_nums
         self.num_gen_params = sum(weight_nums) + sum(bias_nums)
-        self.controller = nn.Conv1d(self.output_dim, self.num_gen_params, kernel_size=1)
+        self.controller = nn.Conv1d(self.transformer_cfg.dec_dim, self.num_gen_params, kernel_size=1)
         torch.nn.init.normal_(self.controller.weight, std=0.01)
         torch.nn.init.constant_(self.controller.bias, 0)
 
@@ -300,13 +300,13 @@ class SoftGroup(nn.Module):
 
             mask_features  = self.mask_tower(torch.unsqueeze(output_feats, dim=2).permute(2,1,0)).permute(2,1,0)
 
-            semantic_scores_inst_cls = F.softmax(semantic_scores[:, self.label_shift:], dim=-1)
+            # semantic_scores_inst_cls = F.softmax(semantic_scores[:, self.label_shift:], dim=-1)
 
             semantic_scores_pred = torch.argmax(semantic_scores, dim=1) # N_points
 
 
-            # object_conditions = (semantic_scores_pred >= 2)
-            object_conditions = torch.any((semantic_scores_inst_cls >= self.grouping_cfg.sem_inst_cls_thresh), dim=-1)
+            object_conditions = (semantic_scores_pred >= 2)
+            # object_conditions = torch.any((semantic_scores_inst_cls >= self.grouping_cfg.sem_inst_cls_thresh), dim=-1)
             object_idxs = torch.nonzero(object_conditions).view(-1)
 
             batch_idxs_ = batch_idxs[object_idxs]
@@ -430,13 +430,13 @@ class SoftGroup(nn.Module):
             batch_offsets = self.get_batch_offsets(batch_idxs, batch_size)
             mask_features  = self.mask_tower(torch.unsqueeze(output_feats, dim=2).permute(2,1,0)).permute(2,1,0)
 
-            semantic_scores_inst_cls = F.softmax(semantic_scores[:, self.label_shift:], dim=-1)
+            # semantic_scores_inst_cls = F.softmax(semantic_scores[:, self.label_shift:], dim=-1)
 
             semantic_scores_pred = torch.argmax(semantic_scores, dim=1) # N_points
 
 
-            # object_conditions = (semantic_scores_pred >= 2)
-            object_conditions = torch.any((semantic_scores_inst_cls >= self.grouping_cfg.sem_inst_cls_thresh), dim=-1)
+            object_conditions = (semantic_scores_pred >= 2)
+            # object_conditions = torch.any((semantic_scores_inst_cls >= self.grouping_cfg.sem_inst_cls_thresh), dim=-1)
             object_idxs = torch.nonzero(object_conditions).view(-1)
 
             batch_idxs_ = batch_idxs[object_idxs]
@@ -859,8 +859,8 @@ class SoftGroup(nn.Module):
 
         cls_logits_scores = torch.gather(cls_logits_b, 1, cls_logits_pred_b.unsqueeze(-1)).squeeze(-1) 
 
-        sem_scores = torch.sum(semantic_scores_b[None,:,:].expand(n_queries, semantic_scores_b.shape[0], semantic_scores_b.shape[1]) * mask_logit_b_bool.int()[:,:,None], dim=1) / (proposals_npoints[:, None] + 1e-6) # n_pred, n_clas
-        sem_scores = torch.gather(sem_scores, 1, cls_logits_pred_b.unsqueeze(-1)).squeeze(-1) 
+        # sem_scores = torch.sum(semantic_scores_b[None,:,:].expand(n_queries, semantic_scores_b.shape[0], semantic_scores_b.shape[1]) * mask_logit_b_bool.int()[:,:,None], dim=1) / (proposals_npoints[:, None] + 1e-6) # n_pred, n_clas
+        # sem_scores = torch.gather(sem_scores, 1, cls_logits_pred_b.unsqueeze(-1)).squeeze(-1) 
 
         # scores = mask_logit_scores * torch.pow(cls_logits_scores, 0.5) * sem_scores
 
