@@ -13,7 +13,7 @@ model:
     dec_ffn_dim: 256
     dec_nhead: 8
     dec_nlayers: 6
-    n_subsample: 50000
+    n_subsample: 30000
 
   grouping_cfg:
     sem_inst_cls_thresh: 0.3
