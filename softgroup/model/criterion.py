@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
+import math
 from .model_utils import giou_aabb, iou_aabb, non_maximum_cluster, non_maximum_cluster2
 
 from .matcher import giou_aabb_matcher
@@ -68,7 +69,8 @@ class Criterion(nn.Module):
                 instance_classes=18,
                 ignore_label=-100,
                 eos_coef=0.1,
-                point_wise_loss=True):
+                point_wise_loss=True,
+                total_epoch=40):
         super(Criterion, self).__init__()
 
         self.matcher = matcher
@@ -81,6 +83,8 @@ class Criterion(nn.Module):
         self.instance_classes = instance_classes
 
         self.eos_coef =eos_coef
+
+        self.total_epoch = total_epoch
 
         empty_weight = torch.ones(self.instance_classes + 1)
         empty_weight[-1] = self.eos_coef
@@ -271,7 +275,7 @@ class Criterion(nn.Module):
         # #     print('iou loss', loss_dict['iou_loss'])
         # return loss
 
-    def forward(self, batch_inputs, model_outputs):
+    def forward(self, batch_inputs, model_outputs, epoch=0):
 
         # '''semantic loss'''
         semantic_scores = model_outputs['semantic_scores']
@@ -349,7 +353,7 @@ class Criterion(nn.Module):
 
         aux_main_loss_dict = self.single_layer_loss(mask_logits_layers[-1], cls_logits_layers[-1],  conf_logits_layers[-1], aux_row_indices, aux_cls_labels, aux_inst_labels, batch_size, n_queries)
 
-        coef_aux = 0.5
+        coef_aux = math.exp((1 - 5 * epoch/self.total_epoch))
         for k, v in self.loss_weight.items():
             loss_dict['aux_' + k] = loss_dict['aux_' + k] + aux_main_loss_dict[k] * v * coef_aux
 

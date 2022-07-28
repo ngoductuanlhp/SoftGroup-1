@@ -54,7 +54,7 @@ def train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer):
         data_time.update(time.time() - end)
         cosine_lr_after_step(optimizer, cfg.optimizer.lr, epoch - 1, cfg.step_epoch, cfg.epochs)
         with torch.cuda.amp.autocast(enabled=cfg.fp16):
-            loss, log_vars = model(batch, return_loss=True)
+            loss, log_vars = model(batch, return_loss=True, epoch=epoch-1)
 
         # meter_dict
         for k, v in log_vars.items():
@@ -189,7 +189,7 @@ def main():
 
     # model
     matcher = HungarianMatcher()
-    criterion = Criterion(matcher, point_wise_loss='input_conv' not in cfg.model.fixed_modules)
+    criterion = Criterion(matcher, point_wise_loss='input_conv' not in cfg.model.fixed_modules, total_epoch=cfg.epochs)
     model = SoftGroup(**cfg.model, criterion=criterion).cuda()
     
     total_params = 0
@@ -234,7 +234,7 @@ def main():
     global best_metric
     best_metric = 0
 
-    validate(0, model, optimizer, val_loader, cfg, logger, writer)
+    # validate(0, model, optimizer, val_loader, cfg, logger, writer)
 
     for epoch in range(start_epoch, cfg.epochs + 1):
         train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer)

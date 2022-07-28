@@ -274,16 +274,16 @@ class SoftGroup(nn.Module):
                 if isinstance(m, nn.BatchNorm1d):
                     m.eval()
 
-    def forward(self, batch, return_loss=False):
+    def forward(self, batch, return_loss=False, epoch=0):
         if return_loss:
-            return self.forward_train(**batch)
+            return self.forward_train(**batch, epoch=epoch)
         else:
             return self.forward_test(**batch)
 
     @cuda_cast
     def forward_train(self, batch_idxs, voxel_coords, p2v_map, v2p_map, coords, coords_float, feats,
                       semantic_labels, instance_labels, instance_pointnum, instance_cls, instance_box, instance_batch_offsets,
-                      pt_offset_labels, pt_offset_vertices_labels, spatial_shape, batch_size, pc_dims, **kwargs):
+                      pt_offset_labels, pt_offset_vertices_labels, spatial_shape, batch_size, pc_dims, epoch, **kwargs):
 
         
         feats = torch.cat((feats, coords_float), 1)
@@ -390,7 +390,7 @@ class SoftGroup(nn.Module):
             ))
 
             # NOTE cal loss
-            losses = self.criterion(batch_inputs, model_outputs)
+            losses = self.criterion(batch_inputs, model_outputs, epoch=epoch)
 
 
         
