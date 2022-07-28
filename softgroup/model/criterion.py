@@ -209,7 +209,7 @@ class Criterion(nn.Module):
         
         
 
-    def single_layer_loss(self, mask_logits_list, cls_logits, conf_logits, row_indices, cls_labels, inst_labels, batch_size, aux=False):
+    def single_layer_loss(self, mask_logits_list, cls_logits, conf_logits, row_indices, cls_labels, inst_labels, batch_size, aux=False, n_main_queries=64):
         # loss = torch.tensor(0.0, requires_grad=True, device=cls_logits.device, dtype=torch.float)
         # loss = 0.0
         loss_dict = {}
@@ -225,13 +225,13 @@ class Criterion(nn.Module):
             conf_logits_b = conf_logits[b] # n_queries
 
             if aux:
-                mask_logit_b = mask_logit_b[64:]
-                cls_logit_b = cls_logit_b[64:]
-                conf_logits_b = conf_logits_b[64:]
+                mask_logit_b = mask_logit_b[n_main_queries:]
+                cls_logit_b = cls_logit_b[n_main_queries:]
+                conf_logits_b = conf_logits_b[n_main_queries:]
             else:
-                mask_logit_b = mask_logit_b[:64]
-                cls_logit_b = cls_logit_b[:64]
-                conf_logits_b = conf_logits_b[:64]
+                mask_logit_b = mask_logit_b[:n_main_queries]
+                cls_logit_b = cls_logit_b[:n_main_queries]
+                conf_logits_b = conf_logits_b[:n_main_queries]
 
             pred_inds, cls_label, inst_label = row_indices[b], cls_labels[b], inst_labels[b]
 
@@ -286,7 +286,7 @@ class Criterion(nn.Module):
         # #     print('iou loss', loss_dict['iou_loss'])
         # return loss
 
-    def forward(self, batch_inputs, model_outputs, epoch=0):
+    def forward(self, batch_inputs, model_outputs, n_main_queries, epoch=0):
 
         # '''semantic loss'''
         semantic_scores = model_outputs['semantic_scores']
@@ -335,7 +335,7 @@ class Criterion(nn.Module):
         #                                                     instance_cls, semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=self.label_shift)
         
         gt_dict, aux_gt_dict = self.matcher.forward_dup(cls_logits_layers[-1], mask_logits_layers[-1], conf_logits_layers[-1],\
-                                                            instance_cls, semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=self.label_shift, dup_gt=6)
+                                                            instance_cls, semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=self.label_shift, dup_gt=6, n_main_queries=n_main_queries)
 
         # NOTE main loss
 
@@ -343,14 +343,14 @@ class Criterion(nn.Module):
         inst_labels = gt_dict['inst_labels']
         cls_labels = gt_dict['cls_labels']
 
-        main_loss_dict = self.single_layer_loss(mask_logits_layers[-1], cls_logits_layers[-1],  conf_logits_layers[-1], row_indices, cls_labels, inst_labels, batch_size)
+        main_loss_dict = self.single_layer_loss(mask_logits_layers[-1], cls_logits_layers[-1],  conf_logits_layers[-1], row_indices, cls_labels, inst_labels, batch_size, n_main_queries=n_main_queries)
 
         for k, v in self.loss_weight.items():
             loss_dict[k] = loss_dict[k] + main_loss_dict[k] * v
 
         ''' Auxilary loss '''
         for l in range(n_layers-1):
-            interm_loss_dict = self.single_layer_loss(mask_logits_layers[l], cls_logits_layers[l],  conf_logits_layers[l], row_indices, cls_labels, inst_labels, batch_size)
+            interm_loss_dict = self.single_layer_loss(mask_logits_layers[l], cls_logits_layers[l],  conf_logits_layers[l], row_indices, cls_labels, inst_labels, batch_size, n_main_queries=n_main_queries)
             # interm_loss = interm_loss * 0.5
             for k, v in self.loss_weight.items():
                 loss_dict[k] = loss_dict[k] + interm_loss_dict[k] * v
@@ -362,7 +362,7 @@ class Criterion(nn.Module):
         aux_inst_labels = aux_gt_dict['inst_labels']
         aux_cls_labels = aux_gt_dict['cls_labels']
 
-        aux_main_loss_dict = self.single_layer_loss(mask_logits_layers[-1], cls_logits_layers[-1],  conf_logits_layers[-1], aux_row_indices, aux_cls_labels, aux_inst_labels, batch_size, aux=True)
+        aux_main_loss_dict = self.single_layer_loss(mask_logits_layers[-1], cls_logits_layers[-1],  conf_logits_layers[-1], aux_row_indices, aux_cls_labels, aux_inst_labels, batch_size, aux=True, n_main_queries=n_main_queries)
 
         coef_aux = math.exp((1 - 5 * epoch/self.total_epoch))
         for k, v in self.loss_weight.items():
@@ -370,7 +370,7 @@ class Criterion(nn.Module):
 
         ''' Auxilary loss '''
         for l in range(n_layers-1):
-            aux_interm_loss_dict = self.single_layer_loss(mask_logits_layers[l], cls_logits_layers[l],  conf_logits_layers[l], aux_row_indices, aux_cls_labels, aux_inst_labels, batch_size, aux=True)
+            aux_interm_loss_dict = self.single_layer_loss(mask_logits_layers[l], cls_logits_layers[l],  conf_logits_layers[l], aux_row_indices, aux_cls_labels, aux_inst_labels, batch_size, aux=True, n_main_queries=n_main_queries)
             # interm_loss = interm_loss * 0.5
             for k, v in self.loss_weight.items():
                 loss_dict['aux_' + k] = loss_dict['aux_' + k] + aux_interm_loss_dict[k] * v * coef_aux

@@ -116,7 +116,7 @@ class HungarianMatcher(nn.Module):
 
         return cls_labels_b, mask_labels_b
 
-    def get_match(self, cls_labels_b, mask_labels_b, cls_preds_b, mask_logits_preds_b, conf_preds_b, dup_gt=6):
+    def get_match(self, cls_labels_b, mask_labels_b, cls_preds_b, mask_logits_preds_b, conf_preds_b, dup_gt=6, n_main_queries=64):
 
         n_inst_gt, n_points = mask_labels_b.shape[:2]
 
@@ -143,14 +143,14 @@ class HungarianMatcher(nn.Module):
         
         final_cost = final_cost.detach()
         
-        main_final_cost = final_cost[:64, :] # 96, n_gt
+        main_final_cost = final_cost[:n_main_queries, :] # 96, n_gt
         main_final_cost = main_final_cost.cpu().numpy() # n_queries, n_gt
 
         row_inds, col_inds = linear_sum_assignment(main_final_cost)
 
 
 
-        aux_final_cost = final_cost[64:, :].repeat(1, dup_gt).cpu().numpy()
+        aux_final_cost = final_cost[n_main_queries:, :].repeat(1, dup_gt).cpu().numpy()
 
         aux_row_inds, aux_col_inds = linear_sum_assignment(aux_final_cost)
 
@@ -241,7 +241,7 @@ class HungarianMatcher(nn.Module):
 
 
     @torch.no_grad()
-    def forward_dup(self, cls_preds, mask_logits_preds, conf_preds, instance_cls, semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=2, dup_gt=1):
+    def forward_dup(self, cls_preds, mask_logits_preds, conf_preds, instance_cls, semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=2, dup_gt=1, n_main_queries=64):
         # cls_preds : batch x classes x n_queries
         batch_size, n_queries, _ = cls_preds.shape
 
@@ -275,7 +275,7 @@ class HungarianMatcher(nn.Module):
             
             # NOTE gt
             cls_labels_b, mask_labels_b = labels_b
-            row_inds, col_inds, aux_row_inds, aux_col_inds = self.get_match(cls_labels_b, mask_labels_b, cls_preds[b], mask_logits_preds[b], conf_preds[b], dup_gt=dup_gt)
+            row_inds, col_inds, aux_row_inds, aux_col_inds = self.get_match(cls_labels_b, mask_labels_b, cls_preds[b], mask_logits_preds[b], conf_preds[b], dup_gt=dup_gt, n_main_queries=n_main_queries)
 
             gt_dict['row_indices'].append(row_inds)
             gt_dict['inst_labels'].append(mask_labels_b[col_inds])

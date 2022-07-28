@@ -92,8 +92,10 @@ class TransformerDecoder(nn.Module):
             pos_ = pos[:n_points[l], ...]
             relative_pos_ = relative_pos[:, :n_points[l], :, :]
             output, attn = layer(output, memory_,
-                           pos=pos_, query_pos=query_pos, relative_pos=relative_pos_,
-                           return_attn_weights=return_attn_weights)
+                           pos=pos_, query_pos=query_pos, 
+                           relative_pos=relative_pos_,
+                           return_attn_weights=return_attn_weights,
+                           tgt_mask=tgt_mask)
             if self.return_intermediate:
                 intermediate.append(self.norm(output))
             # if return_attn_weights:
