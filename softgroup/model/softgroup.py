@@ -94,11 +94,21 @@ class SoftGroup(nn.Module):
         # NOTE transformer decoder
 
         ''' Set aggregate '''
-        set_aggregate_dim_out = 4 * self.channels
-        mlp_dims = [self.channels, 2*self.channels, 2*self.channels, 4*self.channels, 4*self.channels]
+        # set_aggregate_dim_out = 4 * self.channels
+        # mlp_dims = [self.channels, 2*self.channels, 2*self.channels, 4*self.channels, 4*self.channels]
+        # self.set_aggregator = PointnetSAModuleVotes(
+        #     radius=0.3,
+        #     nsample=96,
+        #     npoint=transformer_cfg.n_context_points,
+        #     mlp=mlp_dims,
+        #     normalize_xyz=True,
+        # )
+
+        set_aggregate_dim_out = 2 * self.channels
+        mlp_dims = [self.channels, 2*self.channels, 2*self.channels, 2*self.channels]
         self.set_aggregator = PointnetSAModuleVotes(
-            radius=0.3,
-            nsample=96,
+            radius=0.2,
+            nsample=64,
             npoint=transformer_cfg.n_context_points,
             mlp=mlp_dims,
             normalize_xyz=True,
@@ -891,36 +901,34 @@ class SoftGroup(nn.Module):
             if torch.count_nonzero(final_cond) == 0:
                 instances_arr.append(instances)
                 continue
-
+            
+            # NOTE filter low quality masks
             cls_final = cls_logits_pred_b[final_cond]
             masks_final = mask_logit_b_bool[final_cond]
             scores_final = scores[final_cond]
 
-            num_insts = scores_final.shape[0]
-            proposals_pred = torch.zeros((num_insts, num_points), dtype=torch.int, device=mask_logit_b.device)
-
-            inst_inds, point_inds = torch.nonzero(masks_final, as_tuple=True)
-            
-            point_inds = object_idxs[batch_offsets_[b]:batch_offsets_[b+1]][point_inds] - start
-
-            proposals_pred[inst_inds, point_inds] = 1
-
-
-            # NOTE superpoint refinement
-            proposals_pred = superpoint_align(spp_b, proposals_pred)
-            
-            pick_idxs = non_max_suppression_gpu(proposals_pred, scores_final, threshold=0.2)  # int, (nCluster, N)
-
-            proposals_pred = proposals_pred[pick_idxs]
+            # NOTE NMS
+            pick_idxs = non_max_suppression_gpu(masks_final, scores_final, threshold=0.2)  # int, (nCluster, N)
+            masks_final = masks_final[pick_idxs]
             scores_final = scores_final[pick_idxs]
             cls_final = cls_final[pick_idxs]
 
+            # NOTE project to original mask
+            num_insts = scores_final.shape[0]
+            proposals_pred = torch.zeros((num_insts, num_points), dtype=torch.int, device=mask_logit_b.device)
+            inst_inds, point_inds = torch.nonzero(masks_final, as_tuple=True)
+            point_inds = object_idxs[batch_offsets_[b]:batch_offsets_[b+1]][point_inds] - start
+            proposals_pred[inst_inds, point_inds] = 1
 
+            # NOTE superpoint refinement
+            proposals_pred = superpoint_align(spp_b, proposals_pred)
+
+
+            # NOTE save mask
             proposals_pred = proposals_pred.cpu().numpy()
             scores_final = scores_final.cpu().numpy()
             cls_final = cls_final.cpu().numpy()
 
-            
             for i in range(cls_final.shape[0]):
                 pred = {}
                 pred['scan_id'] = scan_ids[b]
