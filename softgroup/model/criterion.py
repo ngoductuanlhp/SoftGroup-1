@@ -224,14 +224,14 @@ class Criterion(nn.Module):
             cls_logit_b = cls_logits[b] # n_queries x n_classes
             conf_logits_b = conf_logits[b] # n_queries
 
-            if aux:
-                mask_logit_b = mask_logit_b[n_main_queries:]
-                cls_logit_b = cls_logit_b[n_main_queries:]
-                conf_logits_b = conf_logits_b[n_main_queries:]
-            else:
-                mask_logit_b = mask_logit_b[:n_main_queries]
-                cls_logit_b = cls_logit_b[:n_main_queries]
-                conf_logits_b = conf_logits_b[:n_main_queries]
+            # if aux:
+            #     mask_logit_b = mask_logit_b[n_main_queries:]
+            #     cls_logit_b = cls_logit_b[n_main_queries:]
+            #     conf_logits_b = conf_logits_b[n_main_queries:]
+            # else:
+            #     mask_logit_b = mask_logit_b[:n_main_queries]
+            #     cls_logit_b = cls_logit_b[:n_main_queries]
+            #     conf_logits_b = conf_logits_b[:n_main_queries]
 
             pred_inds, cls_label, inst_label = row_indices[b], cls_labels[b], inst_labels[b]
 

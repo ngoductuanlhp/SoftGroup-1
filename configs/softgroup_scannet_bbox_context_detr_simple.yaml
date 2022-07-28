@@ -9,9 +9,9 @@ model:
   transformer_cfg:
     two_stage: True
     n_context_points: 4096
-    n_queries: 192
+    n_queries: 128
     dec_dim: 64
-    dec_ffn_dim: 128
+    dec_ffn_dim: 256
     dec_nhead: 8
     dec_nlayers: 4
     n_subsample: 20000
@@ -75,7 +75,7 @@ data:
 
 dataloader:
   train:
-    batch_size: 6
+    batch_size: 7
     num_workers: 4
   test:
     batch_size: 1
