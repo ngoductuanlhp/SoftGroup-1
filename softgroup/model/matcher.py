@@ -143,11 +143,14 @@ class HungarianMatcher(nn.Module):
         
         final_cost = final_cost.detach()
         
-        aux_final_cost = final_cost.repeat(1, dup_gt).cpu().numpy()
-        final_cost = final_cost.cpu().numpy()
+        main_final_cost = final_cost[:64, :] # 96, n_gt
+        main_final_cost = main_final_cost.cpu().numpy() # n_queries, n_gt
+
+        row_inds, col_inds = linear_sum_assignment(main_final_cost)
 
 
-        row_inds, col_inds = linear_sum_assignment(final_cost)
+
+        aux_final_cost = final_cost[64:, :].repeat(1, dup_gt).cpu().numpy()
 
         aux_row_inds, aux_col_inds = linear_sum_assignment(aux_final_cost)
 

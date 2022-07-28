@@ -15,7 +15,7 @@
 #SBATCH --mail-user=v.tuannd42@vinai.io
 
 
-srun --container-image=/lustre/scratch/client/vinai/users/tuannd42/docker_images/softgroup.sqsh \
+srun --container-image=/lustre/scratch/client/vinai/users/tuannd42/docker_images/softgroup2.sqsh \
 --container-mounts=/lustre/scratch/client/vinai/users/tuannd42/fewshot_ws/SoftGroup:/home/ubuntu/SoftGroup \
 --container-workdir=/home/ubuntu/SoftGroup/ \
-python3 tools/train.py configs/softgroup_scannet_bbox_context_detr.yaml --exp_name detr_dino_box_centroid
+python3 tools/train.py configs/softgroup_scannet_bbox_context_nodetr.yaml --exp_name no_transformer_auxloss_expcoef_separate_mainaux

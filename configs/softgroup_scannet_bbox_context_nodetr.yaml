@@ -8,12 +8,12 @@ model:
   ignore_label: -100
   transformer_cfg:
     n_context_points: 4096
-    n_queries: 192
+    n_queries: 256
     dec_dim: 64
     dec_ffn_dim: 256
     dec_nhead: 8
     dec_nlayers: 6
-    n_subsample: 30000
+    n_subsample: 40000
 
   grouping_cfg:
     sem_inst_cls_thresh: 0.3
