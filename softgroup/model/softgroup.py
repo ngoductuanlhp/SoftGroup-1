@@ -331,10 +331,24 @@ class SoftGroup(nn.Module):
             contexts = self.forward_aggregator(coords_float_, output_feats_, pt_offsets_, pt_offsets_vertices_, batch_offsets_, batch_size, pre_enc_inds=None)
             context_locs, context_boxes, context_centroid, context_feats, pre_enc_inds = contexts
 
-            # NOTE get queries
-            query_locs = context_locs[:, :self.transformer_cfg.n_queries, :]
-            # query_boxes = context_boxes[:, :self.transformer_cfg.n_queries, :]
-            # query_centroid = context_centroid[:, :self.transformer_cfg.n_queries, :]
+            if self.transformer_cfg.two_stage:
+                with torch.no_grad():
+                    context_feats_two_stage = self.encoder_to_decoder_projection(context_feats.permute(0, 2, 1)) # batch x channel x npoints
+                    cls_logits_two_stage = self.detr_sem_head(context_feats_two_stage).transpose(1, 2) # batch x n_contexts x n_classes
+                    cls_logits_two_stage = F.softmax(cls_logits_two_stage, dim=-1)
+                    
+                    cls_logits_two_stage_max = torch.max(cls_logits_two_stage, dim=-1)[0] # batch x n_contexts
+                    topk_queries_inds = torch.topk(cls_logits_two_stage_max, k=self.transformer_cfg.n_queries, dim=-1)[1] # batch x n_queries
+                    # topk_queries_inds = topk_queries_inds.detach()
+
+                query_locs = torch.gather(context_locs, dim=1, index=topk_queries_inds.unsqueeze(-1).expand(batch_size, self.transformer_cfg.n_queries,context_locs.shape[-1]))
+                query_boxes = torch.gather(context_boxes, dim=1, index=topk_queries_inds.unsqueeze(-1).expand(batch_size, self.transformer_cfg.n_queries,context_boxes.shape[-1]))
+                query_centroid = torch.gather(context_centroid, dim=1, index=topk_queries_inds.unsqueeze(-1).expand(batch_size, self.transformer_cfg.n_queries,context_centroid.shape[-1]))
+
+            else: # get first m_queries
+                query_locs = context_locs[:, :self.transformer_cfg.n_queries, :]
+                query_boxes = context_boxes[:, :self.transformer_cfg.n_queries, :]
+                query_centroid = context_centroid[:, :self.transformer_cfg.n_queries, :]
 
             # NOTE process geodist
             # geo_dists = cal_geodesic_vectorize(
@@ -474,10 +488,24 @@ class SoftGroup(nn.Module):
             context_locs, context_boxes, context_centroid, context_feats, pre_enc_inds = contexts
 
 
-            # NOTE get queries
-            query_locs = context_locs[:, :self.transformer_cfg.n_queries, :]
-            query_boxes = context_boxes[:, :self.transformer_cfg.n_queries, :]
-            query_centroid = context_centroid[:, :self.transformer_cfg.n_queries, :]
+            if self.transformer_cfg.two_stage:
+                with torch.no_grad():
+                    context_feats_two_stage = self.encoder_to_decoder_projection(context_feats.permute(0, 2, 1)) # batch x channel x npoints
+                    cls_logits_two_stage = self.detr_sem_head(context_feats_two_stage).transpose(1, 2) # batch x n_contexts x n_classes
+                    cls_logits_two_stage = F.softmax(cls_logits_two_stage, dim=-1)
+                    
+                    cls_logits_two_stage_max = torch.max(cls_logits_two_stage, dim=-1)[0] # batch x n_contexts
+                    topk_queries_inds = torch.topk(cls_logits_two_stage_max, k=self.transformer_cfg.n_queries, dim=-1)[1] # batch x n_queries
+                    # topk_queries_inds = topk_queries_inds.detach()
+
+                query_locs = torch.gather(context_locs, dim=1, index=topk_queries_inds.unsqueeze(-1).expand(batch_size, self.transformer_cfg.n_queries,context_locs.shape[-1]))
+                query_boxes = torch.gather(context_boxes, dim=1, index=topk_queries_inds.unsqueeze(-1).expand(batch_size, self.transformer_cfg.n_queries,context_boxes.shape[-1]))
+                query_centroid = torch.gather(context_centroid, dim=1, index=topk_queries_inds.unsqueeze(-1).expand(batch_size, self.transformer_cfg.n_queries,context_centroid.shape[-1]))
+
+            else: # get first m_queries
+                query_locs = context_locs[:, :self.transformer_cfg.n_queries, :]
+                query_boxes = context_boxes[:, :self.transformer_cfg.n_queries, :]
+                query_centroid = context_centroid[:, :self.transformer_cfg.n_queries, :]
 
 
             # NOTE process geodist

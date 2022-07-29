@@ -122,11 +122,6 @@ class HungarianMatcher(nn.Module):
 
         n_queries = cls_preds_b.shape[0]
 
-
-        # cls_preds_b = cls_preds[b] # n_queries, n_classes
-        # mask_logits_preds_b = mask_logits_preds[b]
-        # conf_preds_b = conf_preds[b] # n_queries
-
         dice_cost = compute_dice(mask_logits_preds_b.reshape(-1, 1, n_points).repeat(1, n_inst_gt, 1).flatten(0, 1), 
                                 mask_labels_b.reshape(1, -1, n_points).repeat(n_queries, 1, 1).flatten(0, 1))
 
@@ -142,17 +137,6 @@ class HungarianMatcher(nn.Module):
         final_cost = 1 * class_cost + 5 * dice_cost + 1 * conf_cost
         
         final_cost = final_cost.detach()
-        
-        # main_final_cost = final_cost[:64, :] # 96, n_gt
-        # main_final_cost = main_final_cost.cpu().numpy() # n_queries, n_gt
-
-        # row_inds, col_inds = linear_sum_assignment(main_final_cost)
-
-
-
-        # aux_final_cost = final_cost[64:, :].repeat(1, dup_gt).cpu().numpy()
-
-        # aux_row_inds, aux_col_inds = linear_sum_assignment(aux_final_cost)
 
         
         main_final_cost = final_cost.cpu().numpy()
