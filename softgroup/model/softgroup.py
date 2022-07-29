@@ -31,7 +31,7 @@ class SoftGroup(nn.Module):
                  train_cfg=None,
                  test_cfg=None,
                  fixed_modules=[],
-                 embedding_coord=False):
+                 semantic_weight=None):
         super().__init__()
         self.channels = channels
         self.num_blocks = num_blocks
@@ -45,15 +45,16 @@ class SoftGroup(nn.Module):
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
         self.fixed_modules = fixed_modules
-        self.embedding_coord = embedding_coord
+
+        self.semantic_weight = semantic_weight
         
 
-        if self.embedding_coord:
-            n_freqs = 4
-            self.pos_embed = PositionalEmbedding(3, n_freqs)
-            in_channels = self.pos_embed.out_channels + 3
-        else:
-            in_channels = 6
+        # if self.embedding_coord:
+        #     n_freqs = 4
+        #     self.pos_embed = PositionalEmbedding(3, n_freqs)
+        #     in_channels = self.pos_embed.out_channels + 3
+        # else:
+        in_channels = 6
 
         block = ResidualBlock
         norm_fn = functools.partial(nn.BatchNorm1d, eps=1e-4, momentum=0.1)
@@ -130,11 +131,7 @@ class SoftGroup(nn.Module):
                       pt_offset_labels, pt_offset_vertices_labels, spatial_shape, batch_size, **kwargs):
         losses = {}
 
-        if self.embedding_coord:
-            feats = torch.cat((feats, self.pos_embed(coords_float)), 1)
-            # print('feats', feats.shape)
-        else:
-            feats = torch.cat((feats, coords_float), 1)
+        feats = torch.cat((feats, coords_float), 1)
         voxel_feats = voxelization(feats, p2v_map)
         input = spconv.SparseConvTensor(voxel_feats, voxel_coords.int(), spatial_shape, batch_size)
         semantic_scores, pt_offsets, pt_offsets_vertices, box_conf, output_feats = self.forward_backbone(input, v2p_map)
@@ -173,8 +170,14 @@ class SoftGroup(nn.Module):
     def point_wise_loss(self, semantic_scores, pt_offsets, pt_offsets_vertices, box_conf, semantic_labels, instance_labels,
                         pt_offset_labels, pt_offset_vertices_labels, coords_float):
         losses = {}
+        
+        if self.semantic_weight:
+            weight = torch.tensor(self.semantic_weight, dtype=torch.float, device='cuda')
+        else:
+            weight = None
         semantic_loss = F.cross_entropy(
-            semantic_scores, semantic_labels, ignore_index=self.ignore_label)
+            semantic_scores, semantic_labels, weight=weight, ignore_index=self.ignore_label)
+            
         losses['semantic_loss'] = semantic_loss
 
         pos_inds = instance_labels != self.ignore_label
@@ -294,10 +297,10 @@ class SoftGroup(nn.Module):
                       semantic_labels, instance_labels, instance_pointnum, instance_cls,
                       pt_offset_labels, pt_offset_vertices_labels, spatial_shape, batch_size, scan_ids, **kwargs):
 
-        if self.embedding_coord:
-            feats = torch.cat((feats, self.pos_embed(coords_float)), 1)
-        else:
-            feats = torch.cat((feats, coords_float), 1)
+        # if self.embedding_coord:
+        #     feats = torch.cat((feats, self.pos_embed(coords_float)), 1)
+        # else:
+        feats = torch.cat((feats, coords_float), 1)
         # feats = torch.cat((feats, coords_float), 1)
         voxel_feats = voxelization(feats, p2v_map)
         input = spconv.SparseConvTensor(voxel_feats, voxel_coords.int(), spatial_shape, batch_size)
@@ -312,11 +315,11 @@ class SoftGroup(nn.Module):
         
         ret = dict(
             scan_id=scan_ids[0],
-            coords_float=coords_float.cpu().numpy(),
+            # coords_float=coords_float.cpu().numpy(),
             semantic_preds=semantic_preds.cpu().numpy(),
             semantic_labels=semantic_labels.cpu().numpy(),
             offset_preds=pt_offsets.cpu().numpy(),
-            offset_vertices_preds=pt_offsets_vertices.cpu().numpy(),
+            # offset_vertices_preds=pt_offsets_vertices.cpu().numpy(),
             offset_labels=pt_offset_labels.cpu().numpy(),
             instance_labels=instance_labels.cpu().numpy())
         if not self.semantic_only:

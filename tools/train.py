@@ -109,11 +109,6 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
     if is_main_process():
         point_eval = PointWiseEval()
         for res in results:
-            # all_sem_preds.append(res['semantic_preds'])
-            # all_sem_labels.append(res['semantic_labels'])
-            # all_offset_preds.append(res['offset_preds'])
-            # all_offset_labels.append(res['offset_labels'])
-            # all_inst_labels.append(res['instance_labels'])
             point_eval.update(res['semantic_preds'], res['offset_preds'], res['semantic_labels'], res['offset_labels'], res['instance_labels'])
             if not cfg.model.semantic_only:
                 all_pred_insts.append(res['pred_instances'])
