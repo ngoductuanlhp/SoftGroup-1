@@ -501,8 +501,8 @@ class SoftGroup(nn.Module):
             dec_outputs      = context_feats[:,:,:self.transformer_cfg.n_queries][None, ...].permute(0,3,1,2) # num_layers x n_queries x batch x channel
 
             # FIXME only for test
-            query_locs = query_locs[:, :64, :]
-            dec_outputs = dec_outputs[:, :64, :, :]
+            # query_locs = query_locs[:, :64, :]
+            # dec_outputs = dec_outputs[:, :64, :, :]
 
             cls_logits_layers, mask_logits_layers, conf_logits_layers = self.forward_head(dec_outputs, mask_features_, coords_float_, query_locs, batch_offsets_)
 

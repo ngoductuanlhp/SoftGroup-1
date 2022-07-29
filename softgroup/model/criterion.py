@@ -224,14 +224,14 @@ class Criterion(nn.Module):
             cls_logit_b = cls_logits[b] # n_queries x n_classes
             conf_logits_b = conf_logits[b] # n_queries
 
-            if aux:
-                mask_logit_b = mask_logit_b[64:]
-                cls_logit_b = cls_logit_b[64:]
-                conf_logits_b = conf_logits_b[64:]
-            else:
-                mask_logit_b = mask_logit_b[:64]
-                cls_logit_b = cls_logit_b[:64]
-                conf_logits_b = conf_logits_b[:64]
+            # if aux:
+            #     mask_logit_b = mask_logit_b[64:]
+            #     cls_logit_b = cls_logit_b[64:]
+            #     conf_logits_b = conf_logits_b[64:]
+            # else:
+            #     mask_logit_b = mask_logit_b[:64]
+            #     cls_logit_b = cls_logit_b[:64]
+            #     conf_logits_b = conf_logits_b[:64]
 
             pred_inds, cls_label, inst_label = row_indices[b], cls_labels[b], inst_labels[b]
 
@@ -364,7 +364,8 @@ class Criterion(nn.Module):
 
         aux_main_loss_dict = self.single_layer_loss(mask_logits_layers[-1], cls_logits_layers[-1],  conf_logits_layers[-1], aux_row_indices, aux_cls_labels, aux_inst_labels, batch_size, aux=True)
 
-        coef_aux = math.exp((1 - 5 * epoch/self.total_epoch))
+        # coef_aux = math.exp((1 - 5 * epoch/self.total_epoch))
+        coef_aux = 2.0
         for k, v in self.loss_weight.items():
             loss_dict['aux_' + k] = loss_dict['aux_' + k] + aux_main_loss_dict[k] * v * coef_aux
 
