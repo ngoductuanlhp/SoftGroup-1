@@ -364,7 +364,8 @@ class Criterion(nn.Module):
 
         aux_main_loss_dict = self.single_layer_loss(mask_logits_layers[-1], cls_logits_layers[-1],  conf_logits_layers[-1], aux_row_indices, aux_cls_labels, aux_inst_labels, batch_size, aux=True, n_main_queries=n_main_queries)
 
-        coef_aux = math.exp((1 - 5 * epoch/self.total_epoch))
+        # coef_aux = math.exp((1 - 5 * epoch/self.total_epoch))
+        coef_aux = 2.0
         for k, v in self.loss_weight.items():
             loss_dict['aux_' + k] = loss_dict['aux_' + k] + aux_main_loss_dict[k] * v * coef_aux
 

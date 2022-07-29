@@ -97,6 +97,8 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
     all_debug_accu = []
     coords = []
 
+    
+
     _, world_size = get_dist_info()
     progress_bar = tqdm(total=len(val_loader) * world_size, disable=not is_main_process())
     val_set = val_loader.dataset
@@ -115,13 +117,14 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
 
     if is_main_process():
         point_eval = PointWiseEval()
+        scannet_eval = ScanNetEval(val_set.CLASSES)
         for res in results:
             if cfg.model.semantic_only:
                 point_eval.update(res['semantic_preds'], res['offset_preds'], res['semantic_labels'], res['offset_labels'], res['instance_labels'])
             else:
                 all_pred_insts.append(res['pred_instances'])
                 all_gt_insts.append(res['gt_instances'])
-                coords.append(res['coords_float'])
+                # coords.append(res['coords_float'])
 
         global best_metric
 
@@ -139,7 +142,6 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
 
         else:
             logger.info('Evaluate instance segmentation')
-            scannet_eval = ScanNetEval(val_set.CLASSES)
 
             # logger.info('Evaluate axis-align box prediction')
             # eval_res = scannet_eval.evaluate_box(all_pred_insts, all_gt_insts, coords)

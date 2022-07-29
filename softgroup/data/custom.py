@@ -318,6 +318,10 @@ class CustomDataset(Dataset):
         pt_offset_labels = torch.cat(pt_offset_labels).float()
         pt_offset_vertices_labels = torch.cat(pt_offset_vertices_labels).float()
 
+        del pt_offset_vertices_labels, pt_offset_labels
+        pt_offset_labels = None
+        pt_offset_vertices_labels = None
+
         pc_mins = torch.stack(pc_mins)
         pc_maxs = torch.stack(pc_maxs) # batch, 3
 

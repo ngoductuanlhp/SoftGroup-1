@@ -7,7 +7,7 @@ model:
   semantic_only: False
   ignore_label: -100
   transformer_cfg:
-    two_stage: True
+    two_stage: False
     n_context_points: 4096
     n_queries: 128
     dec_dim: 64
@@ -75,8 +75,8 @@ data:
 
 dataloader:
   train:
-    batch_size: 7
-    num_workers: 4
+    batch_size: 10
+    num_workers: 2
   test:
     batch_size: 1
     num_workers: 1
@@ -96,5 +96,5 @@ fp16: True
 epochs: 40
 step_epoch: 25
 save_freq: 4
-pretrain: 'work_dirs/softgroup_scannet_bbox_context_nodetr/no_transformer_aux_loss/best.pth'
+pretrain: 'pretrains/best_pretrain.pth'
 work_dir: ''
