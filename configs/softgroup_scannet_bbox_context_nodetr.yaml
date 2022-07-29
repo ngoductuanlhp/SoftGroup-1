@@ -7,7 +7,7 @@ model:
   semantic_only: False
   ignore_label: -100
   transformer_cfg:
-    two_stage: True
+    two_stage: False
     n_context_points: 4096
     n_queries: 192
     dec_dim: 64
