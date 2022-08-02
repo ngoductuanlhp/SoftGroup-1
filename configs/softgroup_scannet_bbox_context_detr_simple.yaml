@@ -13,7 +13,7 @@ model:
     dec_dim: 64
     dec_ffn_dim: 256
     dec_nhead: 8
-    dec_nlayers: 4
+    dec_nlayers: 1
     n_subsample: 20000
     n_main_queries: 64
 
@@ -75,15 +75,15 @@ data:
 
 dataloader:
   train:
-    batch_size: 10
-    num_workers: 2
+    batch_size: 8
+    num_workers: 4
   test:
     batch_size: 1
     num_workers: 1
 
 optimizer:
   type: 'Adam'
-  lr: 0.002
+  lr: 0.004
 
 save_cfg:
   semantic: False
@@ -94,7 +94,7 @@ save_cfg:
 
 fp16: True
 epochs: 40
-step_epoch: 25
+step_epoch: 15
 save_freq: 4
 pretrain: 'pretrains/best_pretrain.pth'
 work_dir: ''

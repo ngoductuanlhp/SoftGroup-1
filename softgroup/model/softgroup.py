@@ -95,8 +95,8 @@ class SoftGroup(nn.Module):
         set_aggregate_dim_out = 2 * self.channels
         mlp_dims = [self.channels, 2*self.channels, 2*self.channels, 2*self.channels]
         self.set_aggregator = PointnetSAModuleVotes(
-            radius=0.2,
-            nsample=64,
+            radius=0.3,
+            nsample=96,
             npoint=transformer_cfg.n_context_points,
             mlp=mlp_dims,
             normalize_xyz=True,
@@ -105,7 +105,7 @@ class SoftGroup(nn.Module):
         # NOTE transformer decoder
         ''' Position embedding '''
         self.pos_embedding = PositionEmbeddingCoordsSine(
-            d_pos=64, pos_type="fourier", normalize=True, d_in=3
+            d_pos=32, pos_type="fourier", normalize=True, d_in=3
         )
 
         self.query_projection = GenericMLP(
@@ -117,14 +117,14 @@ class SoftGroup(nn.Module):
             hidden_use_bias=True,
         )
 
-        # self.pos_projection = GenericMLP(
-        #     input_dim=96,
-        #     hidden_dims=[transformer_cfg.dec_dim],
-        #     output_dim=transformer_cfg.dec_dim,
-        #     use_conv=True,
-        #     output_use_activation=True,
-        #     hidden_use_bias=True,
-        # )
+        self.pos_projection = GenericMLP(
+            input_dim=96,
+            hidden_dims=[transformer_cfg.dec_dim],
+            output_dim=transformer_cfg.dec_dim,
+            use_conv=True,
+            output_use_activation=True,
+            hidden_use_bias=True,
+        )
 
         ''' DETR-Decoder '''
         decoder_layer = TransformerDecoderLayer(
@@ -134,13 +134,16 @@ class SoftGroup(nn.Module):
             dropout=0.0,
             normalize_before=True,
             use_rel=False,
+            onlycross=False,
+            onlyself=False
         )
 
         self.decoder = TransformerDecoder(
             decoder_layer, num_layers=transformer_cfg.dec_nlayers, return_intermediate=True
         )
 
-        self.tgt_embed = nn.Embedding(transformer_cfg.n_queries, transformer_cfg.dec_dim)
+        # self.tgt_embed = nn.Embedding(transformer_cfg.n_queries, transformer_cfg.dec_dim)
+        # nn.init.normal_(self.tgt_embed.weight.data)
 
         self.encoder_to_decoder_projection = GenericMLP(
             input_dim=set_aggregate_dim_out,
@@ -728,13 +731,13 @@ class SoftGroup(nn.Module):
         # context_pos_box = torch.cat([context_locs, context_boxes, context_centroid], dim=-1)
 
         # breakpoint()
-        context_embedding_pos = self.pos_embedding(context_locs, input_range=input_range)
-        # context_embedding_pos = torch.cat([
-        #     self.pos_embedding(context_locs, input_range=input_range),
-        #     self.pos_embedding(context_boxes, input_range=input_range),
-        #     self.pos_embedding(context_centroid, input_range=input_range),
-        # ], dim=1)
-        # context_embedding_pos = self.pos_projection(context_embedding_pos)
+        # context_embedding_pos = self.pos_embedding(context_locs, input_range=input_range)
+        context_embedding_pos = torch.cat([
+            self.pos_embedding(context_locs, input_range=input_range),
+            self.pos_embedding(context_boxes, input_range=input_range),
+            self.pos_embedding(context_centroid, input_range=input_range),
+        ], dim=1)
+        context_embedding_pos = self.pos_projection(context_embedding_pos)
 
         context_feats = self.encoder_to_decoder_projection(
             context_feats.permute(0, 2, 1)
@@ -742,14 +745,14 @@ class SoftGroup(nn.Module):
 
         ''' Init dec_inputs by query features '''
         # query_pos_box = torch.cat([query_locs, query_boxes, query_centroid], dim=-1)
-        query_embedding_pos = self.pos_embedding(query_locs, input_range=input_range)
+        # query_embedding_pos = self.pos_embedding(query_locs, input_range=input_range)
         # query_embedding_pos = self.query_projection(query_embedding_pos.float())
-        # query_embedding_pos = torch.cat([
-        #     self.pos_embedding(query_locs, input_range=input_range),
-        #     self.pos_embedding(query_boxes, input_range=input_range),
-        #     self.pos_embedding(query_centroid, input_range=input_range),
-        # ], dim=1)
-        # query_embedding_pos = self.pos_projection(query_embedding_pos)
+        query_embedding_pos = torch.cat([
+            self.pos_embedding(query_locs, input_range=input_range),
+            self.pos_embedding(query_boxes, input_range=input_range),
+            self.pos_embedding(query_centroid, input_range=input_range),
+        ], dim=1)
+        query_embedding_pos = self.pos_projection(query_embedding_pos)
         # query_embedding_pos = self.query_projection(query_embedding_pos.float())
 
         # tgt      = context_feats[:,:,:n_queries].permute(2, 0, 1)
