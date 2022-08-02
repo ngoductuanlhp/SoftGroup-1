@@ -54,24 +54,24 @@ data:
 
 dataloader:
   train:
-    batch_size: 4
-    num_workers: 4
+    batch_size: 8
+    num_workers: 8
   test:
     batch_size: 1
     num_workers: 1
 
 optimizer:
   type: 'Adam'
-  lr: 0.004
+  lr: 0.002
 
 save_cfg:
   semantic: True
   offset: True
   instance: False
 
-fp16: False
+fp16: True
 epochs: 20
 step_epoch: 0
-save_freq: 2
-pretrain: './hais_ckpt_spconv2.pth'
+save_freq: 4
+pretrain: 'pretrains/softgroup_s3dis_spconv2.pth'
 work_dir: ''

@@ -204,11 +204,29 @@ class SoftGroup(nn.Module):
             point_iou_loss = F.mse_loss(box_conf[pos_inds], iou_gt, reduction='none')
             point_iou_loss = point_iou_loss.sum() / total_pos_inds
 
+
+            gt_offsets = pt_offset_labels[pos_inds]   # (N, 3)
+            pt_diff = pt_offsets[pos_inds] - gt_offsets   # (N, 3)
+            pt_dist = torch.sum(torch.abs(pt_diff), dim=-1)   # (N)
+            offset_norm_loss = torch.sum(pt_dist) / (total_pos_inds + 1e-6)
+
+            gt_offsets_norm = torch.norm(gt_offsets, p=2, dim=1)   # (N), float
+            gt_offsets_ = gt_offsets / (gt_offsets_norm.unsqueeze(-1) + 1e-8)
+            pt_offsets_norm = torch.norm(pt_offsets[pos_inds], p=2, dim=1)
+            pt_offsets_ = pt_offsets[pos_inds] / (pt_offsets_norm.unsqueeze(-1) + 1e-8)
+            direction_diff = - (gt_offsets_ * pt_offsets_).sum(-1)   # (N)
+            offset_dir_loss = torch.sum(direction_diff) / (total_pos_inds + 1e-6)
+
             # breakpoint()
 
         losses['point_iou_loss'] = point_iou_loss
 
-        losses['offset_loss'] = offset_loss
+        # losses['offset_loss'] = offset_loss
+
+
+        losses['offset_loss'] = offset_norm_loss
+        losses['offset_dir_loss'] = offset_dir_loss
+
         losses['offset_vertices_loss'] = offset_vertices_loss
 
         losses['giou_loss'] = giou_loss
