@@ -107,8 +107,8 @@ class SoftGroup(nn.Module):
         set_aggregate_dim_out = 2 * self.channels
         mlp_dims = [self.channels, 2*self.channels, 2*self.channels, 2*self.channels]
         self.set_aggregator = PointnetSAModuleVotes(
-            radius=0.2,
-            nsample=64,
+            radius=0.4,
+            nsample=128,
             npoint=transformer_cfg.n_context_points,
             mlp=mlp_dims,
             normalize_xyz=True,
@@ -165,6 +165,15 @@ class SoftGroup(nn.Module):
             activation="relu",
             use_conv=True,
             output_dim=1
+        )
+
+        self.detr_box_head = GenericMLP(
+            input_dim=transformer_cfg.dec_dim,
+            hidden_dims=[transformer_cfg.dec_dim, transformer_cfg.dec_dim],
+            norm_fn_name="bn1d",
+            activation="relu",
+            use_conv=True,
+            output_dim=6 # xyz_min, xyz_max
         )
 
         ''' DETR-Decoder '''
@@ -394,7 +403,7 @@ class SoftGroup(nn.Module):
             batch_offsets_subsample =  self.get_batch_offsets(batch_idxs_[object_idxs_subsample], batch_size)
 
             # NOTE Dynamic conv
-            cls_logits_layers, mask_logits_layers, conf_logits_layers = self.forward_head(dec_outputs, mask_features_subsample, coords_float_subsample, query_locs, batch_offsets_subsample)
+            cls_logits_layers, mask_logits_layers, conf_logits_layers, box_preds_layers = self.forward_head(dec_outputs, mask_features_subsample, coords_float_subsample, query_locs, batch_offsets_subsample)
 
 
             model_outputs.update(dict(
@@ -407,6 +416,7 @@ class SoftGroup(nn.Module):
                 cls_logits_layers=cls_logits_layers,
                 mask_logits_layers=mask_logits_layers,
                 conf_logits_layers=conf_logits_layers,
+                box_preds_layers=box_preds_layers,
             ))
 
             # NOTE cal loss
@@ -546,7 +556,7 @@ class SoftGroup(nn.Module):
             # query_locs = query_locs[:, :64, :]
             # dec_outputs = dec_outputs[:, :64, :, :]
 
-            cls_logits_layers, mask_logits_layers, conf_logits_layers = self.forward_head(dec_outputs, mask_features_, coords_float_, query_locs, batch_offsets_)
+            cls_logits_layers, mask_logits_layers, conf_logits_layers, box_preds_layers = self.forward_head(dec_outputs, mask_features_, coords_float_, query_locs, batch_offsets_)
 
 
             pred_instances_arr = self.get_instance(scan_ids, mask_logits_layers[-1], cls_logits_layers[-1], conf_logits_layers[-1], object_idxs, batch_offsets, batch_offsets_, semantic_scores_, spps, batch_size,\
@@ -795,6 +805,7 @@ class SoftGroup(nn.Module):
         
         # outputs = []
         cls_logits_layers, mask_logits_layers = [], []
+        box_preds_layers = []
         conf_logits_layers = []
         n_inst_per_layer = batch * n_queries
         for l in range(num_layers):
@@ -804,6 +815,10 @@ class SoftGroup(nn.Module):
             cls_logits = self.detr_sem_head(dec_output.permute(1,2,0)).transpose(1, 2) # batch x n_queries x n_classes
 
             conf_logits = self.detr_conf_head(dec_output.permute(1,2,0)).transpose(1, 2).squeeze(-1) # batch x n_queries
+
+            box_offsets_preds = self.detr_box_head(dec_output.permute(1,2,0)).transpose(1, 2) # batch x n_queries x 6
+
+            box_preds = box_offsets_preds + fps_sampling_locs.repeat(1,1,2)
 
             param_kernel2 = dec_output.transpose(0,1).flatten(0,1) # (batch * n_queries) * channel
             before_embedding_feature    = self.before_embedding_tower(torch.unsqueeze(param_kernel2, dim=2))
@@ -838,7 +853,9 @@ class SoftGroup(nn.Module):
             cls_logits_layers.append(cls_logits)
             mask_logits_layers.append(mask_logits_list)
             conf_logits_layers.append(conf_logits)
-        return cls_logits_layers, mask_logits_layers, conf_logits_layers
+            box_preds_layers.append(box_preds)
+
+        return cls_logits_layers, mask_logits_layers, conf_logits_layers, box_preds_layers
 
     def parse_dynamic_params(self, params, out_channels):
         assert params.dim()==2

@@ -1,4 +1,5 @@
 import functools
+from unittest.mock import NonCallableMagicMock
 
 import spconv.pytorch as spconv
 import torch
@@ -141,7 +142,10 @@ def iou_aabb(pt_offsets_vertices, pt_offset_vertices_labels, coords):
     return iou
 
 
-def giou_aabb(pt_offsets_vertices, pt_offset_vertices_labels, coords):
+def giou_aabb(pt_offsets_vertices, pt_offset_vertices_labels, coords=None):
+    if coords is None:
+        coords = torch.zeros((pt_offsets_vertices.shape[0],3), dtype=torch.float, device=pt_offsets_vertices.device)
+        
     coords_min_pred = coords + pt_offsets_vertices[:, 0:3] # N x 3
     coords_max_pred = coords + pt_offsets_vertices[:, 3:6] # N x 3
 
