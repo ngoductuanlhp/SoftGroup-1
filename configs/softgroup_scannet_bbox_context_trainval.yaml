@@ -29,12 +29,13 @@ model:
     min_npoint: 100
   # fixed_modules: ['input_conv', 'unet', 'output_layer', 'semantic_linear', 'offset_linear', 'offset_vertices_linear']
   fixed_modules: []
+  # embedding_coord: False
   
 data:
   train:
     type: 'scannetv2'
     data_root: 'dataset/scannetv2'
-    prefix: 'train'
+    prefix: 'trainval'
     suffix: '_inst_nostuff.pth'
     training: True
     repeat: 4
@@ -70,24 +71,24 @@ data:
 dataloader:
   train:
     batch_size: 8
-    num_workers: 8
+    num_workers: 2
   test:
     batch_size: 1
-    num_workers: 16
+    num_workers: 1
 
 optimizer:
   type: 'Adam'
   lr: 0.004
 
 save_cfg:
-  semantic: True
-  offset: True
+  semantic: False
+  offset: False
   instance: False
-  offset_vertices: True
+  offset_vertices: False
 
 fp16: True
-epochs: 64
-step_epoch: 25
+epochs: 40
+step_epoch: 16
 save_freq: 4
-pretrain: 'pretrains/best_pretrain_bbox_context_iou_conf_no_coord_embed.pth'
+pretrain: 'pretrains/best_pretrain.pth'
 work_dir: ''

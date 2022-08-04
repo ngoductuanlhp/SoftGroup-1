@@ -120,11 +120,7 @@ def main():
         for res in results:
             scan_ids.append(res['scan_id'])
             coords.append(res['coords_float'])
-            # sem_preds.append(res['semantic_preds'])
-            # sem_labels.append(res['semantic_labels'])
-            # offset_preds.append(res['offset_preds'])
-            # offset_labels.append(res['offset_labels'])
-            # inst_labels.append(res['instance_labels'])
+            
             point_eval.update(res['semantic_preds'], res['offset_preds'], res['semantic_labels'], res['offset_labels'], res['instance_labels'])
             if 'debug_accu' in res:
                 point_eval.update_debug_acc(res['debug_accu'], res['debug_accu_num_pos'])
