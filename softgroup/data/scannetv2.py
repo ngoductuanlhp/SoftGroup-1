@@ -3,9 +3,26 @@ from .custom import CustomDataset
 
 class ScanNetDataset(CustomDataset):
 
-    CLASSES = ('cabinet', 'bed', 'chair', 'sofa', 'table', 'door', 'window', 'bookshelf', 'picture',
-               'counter', 'desk', 'curtain', 'refrigerator', 'shower curtain', 'toilet', 'sink',
-               'bathtub', 'otherfurniture')
+    CLASSES = (
+        "cabinet",
+        "bed",
+        "chair",
+        "sofa",
+        "table",
+        "door",
+        "window",
+        "bookshelf",
+        "picture",
+        "counter",
+        "desk",
+        "curtain",
+        "refrigerator",
+        "shower curtain",
+        "toilet",
+        "sink",
+        "bathtub",
+        "otherfurniture",
+    )
 
     def getInstanceInfo(self, xyz, instance_label, semantic_label):
         ret = super().getInstanceInfo(xyz, instance_label, semantic_label)

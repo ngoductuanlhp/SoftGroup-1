@@ -1,6 +1,9 @@
-import os
 import numpy as np
+
+import os
 import shutil
+
+
 # split_files = open('/home/ubuntu/Workspace/tuannd42-dev/3dis_ws/SoftGroup/dataset/scannetv2/scannetv2_train.txt', 'r')
 # split_names = split_files.read().splitlines()
 
@@ -26,12 +29,12 @@ import shutil
 # print(f'train: {len(train_split)}')
 # print(f'val: {len(val_split)}')
 
-split_files = open('dataset/scannetv2/scannetv2_trainsmall.txt', 'r')
+split_files = open("dataset/scannetv2/scannetv2_trainsmall.txt", "r")
 split_names = split_files.read().splitlines()
 
-files = sorted([f'dataset/scannetv2/train/{s}_inst_nostuff.pth' for s in split_names])
+files = sorted([f"dataset/scannetv2/train/{s}_inst_nostuff.pth" for s in split_names])
 
-dst_files = sorted([f'dataset/scannetv2/trainsmall/{s}_inst_nostuff.pth' for s in split_names])
+dst_files = sorted([f"dataset/scannetv2/trainsmall/{s}_inst_nostuff.pth" for s in split_names])
 
 for i in range(len(dst_files)):
     shutil.copy(files[i], dst_files[i])

@@ -1,11 +1,11 @@
 # Simplfied from mmcv.
 # Directly use torch.cuda.amp.autocast for mix-precision and support sparse tensor
+import spconv.pytorch as spconv
+import torch
+
 import functools
 from collections import abc
 from inspect import getfullargspec
-
-import spconv.pytorch as spconv
-import torch
 
 
 def cast_tensor_type(inputs, src_type, dst_type):
@@ -25,14 +25,11 @@ def cast_tensor_type(inputs, src_type, dst_type):
 
 
 def force_fp32(apply_to=None, out_fp16=False):
-
     def force_fp32_wrapper(old_func):
-
         @functools.wraps(old_func)
         def new_func(*args, **kwargs):
             if not isinstance(args[0], torch.nn.Module):
-                raise TypeError('@force_fp32 can only be used to decorate the '
-                                'method of nn.Module')
+                raise TypeError("@force_fp32 can only be used to decorate the " "method of nn.Module")
             # get the arg spec of the decorated method
             args_info = getfullargspec(old_func)
             # get the argument names to be casted
@@ -40,7 +37,7 @@ def force_fp32(apply_to=None, out_fp16=False):
             # convert the args that need to be processed
             new_args = []
             if args:
-                arg_names = args_info.args[:len(args)]
+                arg_names = args_info.args[: len(args)]
                 for i, arg_name in enumerate(arg_names):
                     if arg_name in args_to_cast:
                         new_args.append(cast_tensor_type(args[i], torch.half, torch.float))

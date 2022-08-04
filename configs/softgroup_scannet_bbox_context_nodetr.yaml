@@ -74,7 +74,7 @@ data:
 
 dataloader:
   train:
-    batch_size: 10
+    batch_size: 8
     num_workers: 4
   test:
     batch_size: 1
@@ -82,7 +82,7 @@ dataloader:
 
 optimizer:
   type: 'Adam'
-  lr: 0.002
+  lr: 0.004
 
 save_cfg:
   semantic: False
@@ -93,7 +93,7 @@ save_cfg:
 
 fp16: True
 epochs: 40
-step_epoch: 25
+step_epoch: 18
 save_freq: 4
-pretrain: 'pretrains/best_notransformer.pth'
+pretrain: 'pretrains/best_notransformer_box.pth'
 work_dir: ''

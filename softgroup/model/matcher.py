@@ -18,6 +18,7 @@ from torch import nn
 # from util.box_ops import box_cxcywh_to_xyxy, generalized_box_iou, generalized_box_cdist
 import functools
 
+
 def compute_dice(inputs, targets):
     """
     Compute the DICE loss, similar to generalized IOU for masks
@@ -35,19 +36,19 @@ def compute_dice(inputs, targets):
     loss = 1 - (numerator + 1) / (denominator + 1)
     return loss
 
+
 def giou_aabb_matcher(box_preds, box_gt):
 
-    coords_min_pred = box_preds[:, 0:3] # n_queries x 3
-    coords_max_pred = box_preds[:, 3:6] # n_queries x 3
+    coords_min_pred = box_preds[:, 0:3]  # n_queries x 3
+    coords_max_pred = box_preds[:, 3:6]  # n_queries x 3
 
-    coords_min_gt = box_gt[:, 0:3] # n_inst x 3
-    coords_max_gt = box_gt[:, 3:6]# n_inst x 3
+    coords_min_gt = box_gt[:, 0:3]  # n_inst x 3
+    coords_max_gt = box_gt[:, 3:6]  # n_inst x 3
 
+    upper = torch.min(coords_max_pred, coords_max_gt)  # Nx3
+    lower = torch.max(coords_min_pred, coords_min_gt)  # Nx3
 
-    upper = torch.min(coords_max_pred, coords_max_gt) # Nx3
-    lower = torch.max(coords_min_pred, coords_min_gt) # Nx3
-
-    intersection = torch.prod(torch.clamp((upper - lower), min=0.0), -1) # N
+    intersection = torch.prod(torch.clamp((upper - lower), min=0.0), -1)  # N
 
     gt_volumes = torch.prod(torch.clamp((coords_max_gt - coords_min_gt), min=0.0), -1)
     pred_volumes = torch.prod(torch.clamp((coords_max_pred - coords_min_pred), min=0.0), -1)
@@ -58,7 +59,7 @@ def giou_aabb_matcher(box_preds, box_gt):
     upper_bound = torch.max(coords_max_pred, coords_max_gt)
     lower_bound = torch.min(coords_min_pred, coords_min_gt)
 
-    volumes_bound = torch.prod(torch.clamp((upper_bound - lower_bound), min=0.0), -1) # N
+    volumes_bound = torch.prod(torch.clamp((upper_bound - lower_bound), min=0.0), -1)  # N
 
     giou = iou - (volumes_bound - union) / (volumes_bound + 1e-6)
 
@@ -72,11 +73,7 @@ class HungarianMatcher(nn.Module):
     while the others are un-matched (and thus treated as non-objects).
     """
 
-    def __init__(self,
-                ignore_label=-100,
-                cost_class=1,
-                cost_bbox=1,
-                cost_giou=1):
+    def __init__(self, ignore_label=-100, cost_class=1, cost_bbox=1, cost_giou=1):
         """Creates the matcher
         Params:
             cost_class: This is the relative weight of the classification error in the matching cost
@@ -91,16 +88,15 @@ class HungarianMatcher(nn.Module):
         self.cost_bbox = cost_bbox
         self.cost_giou = cost_giou
         assert cost_class != 0 or cost_bbox != 0 or cost_giou != 0, "all costs cant be 0"
-    
+
     def get_gt(self, instance_labels_b, instance_cls, instance_box):
         n_points = instance_labels_b.shape[0]
 
         unique_inst = torch.unique(instance_labels_b)
         unique_inst = unique_inst[unique_inst != self.ignore_label]
-        
-        
-        cls_label = instance_cls[unique_inst] # n_inst
-        cls_label_cond = (cls_label >= 0)
+
+        cls_label = instance_cls[unique_inst]  # n_inst
+        cls_label_cond = cls_label >= 0
         cls_labels_b = cls_label[cls_label_cond]
         fg_unique_inst = unique_inst[cls_label_cond]
 
@@ -119,17 +115,28 @@ class HungarianMatcher(nn.Module):
 
         return cls_labels_b, mask_labels_b, box_labels_b
 
-    def get_match(self, cls_labels_b, mask_labels_b, box_labels_b, cls_preds_b, mask_logits_preds_b, conf_preds_b, box_preds_b, dup_gt=6):
+    def get_match(
+        self,
+        cls_labels_b,
+        mask_labels_b,
+        box_labels_b,
+        cls_preds_b,
+        mask_logits_preds_b,
+        conf_preds_b,
+        box_preds_b,
+        dup_gt=6,
+    ):
 
         n_inst_gt, n_points = mask_labels_b.shape[:2]
 
         n_queries = cls_preds_b.shape[0]
 
-        dice_cost = compute_dice(mask_logits_preds_b.reshape(-1, 1, n_points).repeat(1, n_inst_gt, 1).flatten(0, 1), 
-                                mask_labels_b.reshape(1, -1, n_points).repeat(n_queries, 1, 1).flatten(0, 1))
+        dice_cost = compute_dice(
+            mask_logits_preds_b.reshape(-1, 1, n_points).repeat(1, n_inst_gt, 1).flatten(0, 1),
+            mask_labels_b.reshape(1, -1, n_points).repeat(n_queries, 1, 1).flatten(0, 1),
+        )
 
         dice_cost = dice_cost.reshape(n_queries, n_inst_gt)
-
 
         cls_preds_b_sm = torch.nn.functional.softmax(cls_preds_b, dim=-1)
 
@@ -137,8 +144,12 @@ class HungarianMatcher(nn.Module):
 
         conf_cost = -conf_preds_b[:, None].repeat(1, n_inst_gt)
 
-        box_preds_b = box_preds_b[:, None, :].repeat(1, n_inst_gt, 1).reshape(n_queries*n_inst_gt, -1) # n_queries * n_inst, 6
-        box_labels_b = box_labels_b[None, :, :].repeat(n_queries, 1, 1).reshape(n_queries*n_inst_gt, -1) # n_queries * n_inst, 6
+        box_preds_b = (
+            box_preds_b[:, None, :].repeat(1, n_inst_gt, 1).reshape(n_queries * n_inst_gt, -1)
+        )  # n_queries * n_inst, 6
+        box_labels_b = (
+            box_labels_b[None, :, :].repeat(n_queries, 1, 1).reshape(n_queries * n_inst_gt, -1)
+        )  # n_queries * n_inst, 6
         # box_preds_b = box_preds_b.reshape(n_queries*n_inst_gt, -1)
         # instance_box_b = instance_box_b.reshape(n_queries*n_inst_gt, -1)
         _, giou_b = giou_aabb_matcher(box_preds_b, box_labels_b)
@@ -146,10 +157,9 @@ class HungarianMatcher(nn.Module):
         giou_cost = -giou_b
 
         final_cost = 1 * class_cost + 5 * dice_cost + 1 * conf_cost + 1 * giou_cost
-        
+
         final_cost = final_cost.detach()
 
-        
         main_final_cost = final_cost.cpu().numpy()
 
         row_inds, col_inds = linear_sum_assignment(main_final_cost)
@@ -160,7 +170,17 @@ class HungarianMatcher(nn.Module):
         return row_inds, col_inds, aux_row_inds, aux_col_inds
 
     @torch.no_grad()
-    def forward(self, cls_preds, mask_logits_preds, conf_preds, instance_cls, semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=2):
+    def forward(
+        self,
+        cls_preds,
+        mask_logits_preds,
+        conf_preds,
+        instance_cls,
+        semantic_labels_,
+        instance_labels_,
+        batch_offsets_,
+        instance_label_shift=2,
+    ):
         # cls_preds : batch x classes x n_queries
         batch_size, n_queries, _ = cls_preds.shape
 
@@ -168,14 +188,12 @@ class HungarianMatcher(nn.Module):
         inst_labels = []
         cls_labels = []
 
-
         for b in range(batch_size):
-            start, end = batch_offsets_[b], batch_offsets_[b+1]
-            
+            start, end = batch_offsets_[b], batch_offsets_[b + 1]
 
-            cls_preds_b = cls_preds[b] # n_queries, n_classes
+            cls_preds_b = cls_preds[b]  # n_queries, n_classes
             mask_logits_preds_b = mask_logits_preds[b]
-            conf_preds_b = conf_preds[b] # n_queries
+            conf_preds_b = conf_preds[b]  # n_queries
 
             instance_labels_b = instance_labels_[start:end]
             # semantic_labels_b = semantic_labels_[start:end]
@@ -185,8 +203,7 @@ class HungarianMatcher(nn.Module):
 
             # unique_inst = torch.unique(instance_labels_b)
             # unique_inst = unique_inst[unique_inst != self.ignore_label]
-            
-            
+
             # cls_label = instance_cls[unique_inst] # n_inst
             # cls_label_cond = (cls_label >= 0)
             # cls_labels_b = cls_label[cls_label_cond]
@@ -216,11 +233,12 @@ class HungarianMatcher(nn.Module):
 
             cls_labels_b, mask_labels_b = labels_b
 
-            dice_cost = compute_dice(mask_logits_preds_b.reshape(-1, 1, n_points).repeat(1, n_inst_gt, 1).flatten(0, 1), 
-                                    mask_labels_b.reshape(1, -1, n_points).repeat(n_queries, 1, 1).flatten(0, 1))
+            dice_cost = compute_dice(
+                mask_logits_preds_b.reshape(-1, 1, n_points).repeat(1, n_inst_gt, 1).flatten(0, 1),
+                mask_labels_b.reshape(1, -1, n_points).repeat(n_queries, 1, 1).flatten(0, 1),
+            )
 
             dice_cost = dice_cost.reshape(n_queries, n_inst_gt)
-
 
             cls_preds_b_sm = torch.nn.functional.softmax(cls_preds_b, dim=-1)
 
@@ -229,9 +247,8 @@ class HungarianMatcher(nn.Module):
             conf_cost = -conf_preds_b[:, None].repeat(1, n_inst_gt)
 
             final_cost = 1 * class_cost + 5 * dice_cost + 1 * conf_cost
-            
-            final_cost = final_cost.detach().cpu().numpy()
 
+            final_cost = final_cost.detach().cpu().numpy()
 
             row_inds, col_inds = linear_sum_assignment(final_cost)
 
@@ -242,9 +259,21 @@ class HungarianMatcher(nn.Module):
 
         return row_indices, cls_labels, inst_labels
 
-
     @torch.no_grad()
-    def forward_dup(self, cls_preds, mask_logits_preds, conf_preds, box_preds, instance_cls, instance_box, semantic_labels_, instance_labels_, batch_offsets_, instance_label_shift=2, dup_gt=1):
+    def forward_dup(
+        self,
+        cls_preds,
+        mask_logits_preds,
+        conf_preds,
+        box_preds,
+        instance_cls,
+        instance_box,
+        semantic_labels_,
+        instance_labels_,
+        batch_offsets_,
+        instance_label_shift=2,
+        dup_gt=1,
+    ):
         # cls_preds : batch x classes x n_queries
         batch_size, n_queries, _ = cls_preds.shape
 
@@ -263,31 +292,40 @@ class HungarianMatcher(nn.Module):
         )
 
         for b in range(batch_size):
-            start, end = batch_offsets_[b], batch_offsets_[b+1]
+            start, end = batch_offsets_[b], batch_offsets_[b + 1]
 
             instance_labels_b = instance_labels_[start:end]
 
             labels_b = self.get_gt(instance_labels_b, instance_cls, instance_box)
             if labels_b is None:
-                gt_dict['row_indices'].append(None)
-                gt_dict['inst_labels'].append(None)
-                gt_dict['cls_labels'].append(None)
-                gt_dict['box_labels'].append(None)
+                gt_dict["row_indices"].append(None)
+                gt_dict["inst_labels"].append(None)
+                gt_dict["cls_labels"].append(None)
+                gt_dict["box_labels"].append(None)
 
-                aux_gt_dict['row_indices'].append(None)
-                aux_gt_dict['inst_labels'].append(None)
-                aux_gt_dict['cls_labels'].append(None)
-                aux_gt_dict['box_labels'].append(None)
+                aux_gt_dict["row_indices"].append(None)
+                aux_gt_dict["inst_labels"].append(None)
+                aux_gt_dict["cls_labels"].append(None)
+                aux_gt_dict["box_labels"].append(None)
                 continue
-            
+
             # NOTE gt
             cls_labels_b, mask_labels_b, box_labels_b = labels_b
-            row_inds, col_inds, aux_row_inds, aux_col_inds = self.get_match(cls_labels_b, mask_labels_b, box_labels_b, cls_preds[b], mask_logits_preds[b], conf_preds[b], box_preds[b], dup_gt=dup_gt)
+            row_inds, col_inds, aux_row_inds, aux_col_inds = self.get_match(
+                cls_labels_b,
+                mask_labels_b,
+                box_labels_b,
+                cls_preds[b],
+                mask_logits_preds[b],
+                conf_preds[b],
+                box_preds[b],
+                dup_gt=dup_gt,
+            )
 
-            gt_dict['row_indices'].append(row_inds)
-            gt_dict['inst_labels'].append(mask_labels_b[col_inds])
-            gt_dict['cls_labels'].append(cls_labels_b[col_inds])
-            gt_dict['box_labels'].append(box_labels_b[col_inds])
+            gt_dict["row_indices"].append(row_inds)
+            gt_dict["inst_labels"].append(mask_labels_b[col_inds])
+            gt_dict["cls_labels"].append(cls_labels_b[col_inds])
+            gt_dict["box_labels"].append(box_labels_b[col_inds])
 
             # NOTE aux gt
             aux_cls_labels_b = cls_labels_b.repeat(dup_gt)
@@ -296,14 +334,13 @@ class HungarianMatcher(nn.Module):
 
             # aux_row_inds, aux_col_inds = self.get_match(aux_cls_labels_b, aux_mask_labels_b, cls_preds[b], mask_logits_preds[b], conf_preds[b])
 
-            aux_gt_dict['row_indices'].append(aux_row_inds)
-            aux_gt_dict['inst_labels'].append(aux_mask_labels_b[aux_col_inds])
-            aux_gt_dict['cls_labels'].append(aux_cls_labels_b[aux_col_inds])
-            aux_gt_dict['box_labels'].append(aux_box_labels_b[aux_col_inds])
+            aux_gt_dict["row_indices"].append(aux_row_inds)
+            aux_gt_dict["inst_labels"].append(aux_mask_labels_b[aux_col_inds])
+            aux_gt_dict["cls_labels"].append(aux_cls_labels_b[aux_col_inds])
+            aux_gt_dict["box_labels"].append(aux_box_labels_b[aux_col_inds])
 
         return gt_dict, aux_gt_dict
 
+
 def build_matcher(args):
-    return HungarianMatcher(cost_class=args.set_cost_class,
-                            cost_bbox=args.set_cost_bbox,
-                            cost_giou=args.set_cost_giou)
+    return HungarianMatcher(cost_class=args.set_cost_class, cost_bbox=args.set_cost_bbox, cost_giou=args.set_cost_giou)

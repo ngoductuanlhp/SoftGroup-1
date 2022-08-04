@@ -163,16 +163,14 @@ def cal_geodesic_vectorize(
         geo_dists.append(geo_dist)
     return geo_dists
 
+
 # NOTE fastest way to cal geodesic distance
 @torch.no_grad()
-def cal_geodesic_vectorize_batch(
-    gpu_index, context_locs, max_step=128, neighbor=64, radius=0.05, n_queries=128
-):
+def cal_geodesic_vectorize_batch(gpu_index, context_locs, max_step=128, neighbor=64, radius=0.05, n_queries=128):
     # context_locs: b, n_context, 3
     batch_size, n_points = context_locs.shape[:2]
     geo_dists = torch.zeros((batch_size, n_queries, n_points), dtype=torch.float32, device=context_locs.device) - 1
     visiteds = torch.zeros((batch_size, n_queries, n_points), dtype=torch.bool, device=context_locs.device)
-
 
     # arange_tensor = torch.arange(0, n_queries, dtype=torch.long, device=context_locs.device)
     query_inds = torch.arange(0, n_queries, dtype=torch.long, device=context_locs.device)
@@ -182,8 +180,6 @@ def cal_geodesic_vectorize_batch(
 
     for b in range(batch_size):
 
-
-
         distances_arr, indices_arr = find_knn(gpu_index, context_locs[b], neighbor=neighbor)
 
         # NOTE nearest neigbor is themself -> remove first element
@@ -192,7 +188,6 @@ def cal_geodesic_vectorize_batch(
 
         # geo_dist = torch.zeros((n_queries, n_points), dtype=torch.float32, device=context_locs.device) - 1
         # visited = torch.zeros((n_queries, n_points), dtype=torch.bool, device=context_locs.device)
-
 
         # geo_dist[arange_tensor, query_inds] = 0.0
         # visited[arange_tensor, query_inds] = True
@@ -240,4 +235,3 @@ def cal_geodesic_vectorize_batch(
             queries_inds = queries_inds[temp_inds, neighbors_inds]  # n_temp2
 
     return geo_dists
-

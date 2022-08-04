@@ -14,7 +14,7 @@ def rle_encode(mask):
     mask = np.concatenate([[0], mask, [0]])
     runs = np.where(mask[1:] != mask[:-1])[0] + 1
     runs[1::2] -= runs[::2]
-    counts = ' '.join(str(x) for x in runs)
+    counts = " ".join(str(x) for x in runs)
     rle = dict(length=length, counts=counts)
     return rle
 
@@ -27,8 +27,8 @@ def rle_decode(rle):
     Returns:
         mask (np.ndarray): decoded mask
     """
-    length = rle['length']
-    counts = rle['counts']
+    length = rle["length"]
+    counts = rle["counts"]
     s = counts.split()
     starts, nums = [np.asarray(x, dtype=np.int32) for x in (s[0:][::2], s[1:][::2])]
     starts -= 1

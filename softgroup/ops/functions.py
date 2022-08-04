@@ -5,10 +5,9 @@ from . import ops
 
 
 class GetMaskIoUOnCluster(Function):
-
     @staticmethod
     def forward(ctx, proposals_idx, proposals_offset, instance_labels, instance_pointnum):
-        '''
+        """
         :param ctx:
         :param proposals_idx: (sumNPoint), int
         :param proposals_offset: (nProposal + 1), int
@@ -19,7 +18,7 @@ class GetMaskIoUOnCluster(Function):
 
         :return: proposals_iou: (nProposal, total_nInst), float
         :return mask_label:
-        '''
+        """
 
         nInstance = instance_pointnum.size(0)
         nProposal = proposals_offset.size(0) - 1
@@ -30,8 +29,9 @@ class GetMaskIoUOnCluster(Function):
         assert instance_labels.is_contiguous() and instance_labels.is_cuda
         assert instance_pointnum.is_contiguous() and instance_pointnum.is_cuda
 
-        ops.get_mask_iou_on_cluster(proposals_idx, proposals_offset, instance_labels,
-                                    instance_pointnum, proposals_iou, nInstance, nProposal)
+        ops.get_mask_iou_on_cluster(
+            proposals_idx, proposals_offset, instance_labels, instance_pointnum, proposals_iou, nInstance, nProposal
+        )
 
         return proposals_iou
 
@@ -44,11 +44,9 @@ get_mask_iou_on_cluster = GetMaskIoUOnCluster.apply
 
 
 class GetMaskIoUOnPred(Function):
-
     @staticmethod
-    def forward(ctx, proposals_idx, proposals_offset, instance_labels, instance_pointnum,
-                mask_scores_sigmoid):
-        '''
+    def forward(ctx, proposals_idx, proposals_offset, instance_labels, instance_pointnum, mask_scores_sigmoid):
+        """
         :param ctx:
         :param proposals_idx: (sumNPoint), int
         :param proposals_offset: (nProposal + 1), int
@@ -59,7 +57,7 @@ class GetMaskIoUOnPred(Function):
 
         :return: proposals_iou: (nProposal, total_nInst), float
         :return mask_label:
-        '''
+        """
 
         nInstance = instance_pointnum.size(0)
         nProposal = proposals_offset.size(0) - 1
@@ -71,9 +69,16 @@ class GetMaskIoUOnPred(Function):
         assert instance_pointnum.is_contiguous() and instance_pointnum.is_cuda
         assert mask_scores_sigmoid.is_contiguous() and mask_scores_sigmoid.is_cuda
 
-        ops.get_mask_iou_on_pred(proposals_idx, proposals_offset, instance_labels,
-                                 instance_pointnum, proposals_iou, nInstance, nProposal,
-                                 mask_scores_sigmoid)
+        ops.get_mask_iou_on_pred(
+            proposals_idx,
+            proposals_offset,
+            instance_labels,
+            instance_pointnum,
+            proposals_iou,
+            nInstance,
+            nProposal,
+            mask_scores_sigmoid,
+        )
 
         return proposals_iou
 
@@ -86,11 +91,11 @@ get_mask_iou_on_pred = GetMaskIoUOnPred.apply
 
 
 class GetMaskLabel(Function):
-
     @staticmethod
-    def forward(ctx, proposals_idx, proposals_offset, instance_labels, instance_cls,
-                instance_pointnum, proposals_iou, iou_thr):
-        '''
+    def forward(
+        ctx, proposals_idx, proposals_offset, instance_labels, instance_cls, instance_pointnum, proposals_iou, iou_thr
+    ):
+        """
         :param ctx:
         :param proposals_idx: (sumNPoint), int
         :param proposals_offset: (nProposal + 1), int
@@ -100,11 +105,11 @@ class GetMaskLabel(Function):
 
         :return: proposals_iou: (nProposal, total_nInst), float
         :return mask_label:
-        '''
+        """
 
         nInstance = instance_pointnum.size(0)
         nProposal = proposals_offset.size(0) - 1
-        mask_label = torch.cuda.FloatTensor(proposals_idx.shape).zero_() - 1.
+        mask_label = torch.cuda.FloatTensor(proposals_idx.shape).zero_() - 1.0
 
         assert proposals_iou.is_contiguous() and proposals_iou.is_cuda
         assert proposals_idx.is_contiguous() and proposals_idx.is_cuda
@@ -112,8 +117,17 @@ class GetMaskLabel(Function):
         assert instance_labels.is_contiguous() and instance_labels.is_cuda
         assert instance_cls.is_contiguous() and instance_cls.is_cuda
 
-        ops.get_mask_label(proposals_idx, proposals_offset, instance_labels, instance_cls,
-                           proposals_iou, nInstance, nProposal, iou_thr, mask_label)
+        ops.get_mask_label(
+            proposals_idx,
+            proposals_offset,
+            instance_labels,
+            instance_cls,
+            proposals_iou,
+            nInstance,
+            nProposal,
+            iou_thr,
+            mask_label,
+        )
 
         return mask_label
 
@@ -126,10 +140,9 @@ get_mask_label = GetMaskLabel.apply
 
 
 class Voxelization_Idx(Function):
-
     @staticmethod
     def forward(ctx, coords, batchsize, mode=4):
-        '''
+        """
         :param ctx:
         :param coords:  long (N, dimension + 1) or (N, dimension) dimension = 3
         :param batchsize
@@ -138,7 +151,7 @@ class Voxelization_Idx(Function):
         :return: output_coords:  long (M, dimension + 1) (M <= N)
         :return: output_map: int M * (maxActive + 1)
         :return: input_map: int N
-        '''
+        """
         assert coords.is_contiguous()
         N = coords.size(0)
         output_coords = coords.new()
@@ -158,15 +171,14 @@ voxelization_idx = Voxelization_Idx.apply
 
 
 class Voxelization(Function):
-
     @staticmethod
     def forward(ctx, feats, map_rule, mode=4):
-        '''
+        """
         :param ctx:
         :param map_rule: cuda int M * (maxActive + 1)
         :param feats: cuda float N * C
         :return: output_feats: cuda float M * C
-        '''
+        """
         assert map_rule.is_contiguous()
         assert feats.is_contiguous()
         N, C = feats.size()
@@ -195,10 +207,9 @@ voxelization = Voxelization.apply
 
 
 class BallQueryBatchP(Function):
-
     @staticmethod
     def forward(ctx, coords, batch_idxs, batch_offsets, radius, meanActive):
-        '''
+        """
         :param ctx:
         :param coords: (n, 3) float
         :param batch_idxs: (n) int
@@ -207,7 +218,7 @@ class BallQueryBatchP(Function):
         :param meanActive: int
         :return: idx (nActive), int
         :return: start_len (n, 2), int
-        '''
+        """
 
         n = coords.size(0)
 
@@ -219,8 +230,7 @@ class BallQueryBatchP(Function):
             idx = torch.cuda.IntTensor(n * meanActive).zero_()
             start_len = torch.cuda.IntTensor(n, 2).zero_()
 
-            nActive = ops.ballquery_batch_p(coords, batch_idxs, batch_offsets, idx, start_len, n,
-                                            meanActive, radius)
+            nActive = ops.ballquery_batch_p(coords, batch_idxs, batch_offsets, idx, start_len, n, meanActive, radius)
             if nActive <= n * meanActive:
                 break
             meanActive = int(nActive // n + 1)
@@ -235,11 +245,11 @@ class BallQueryBatchP(Function):
 
 ballquery_batch_p = BallQueryBatchP.apply
 
-class BallQueryBatchP_BoxIou(Function):
 
+class BallQueryBatchP_BoxIou(Function):
     @staticmethod
     def forward(ctx, coords_min, coords_max, batch_idxs, batch_offsets, thresh_iou, meanActive):
-        '''
+        """
         :param ctx:
         :param coords: (n, 3) float
         :param batch_idxs: (n) int
@@ -248,7 +258,7 @@ class BallQueryBatchP_BoxIou(Function):
         :param meanActive: int
         :return: idx (nActive), int
         :return: start_len (n, 2), int
-        '''
+        """
 
         n = coords_min.size(0)
 
@@ -261,12 +271,11 @@ class BallQueryBatchP_BoxIou(Function):
             idx = torch.cuda.IntTensor(n * meanActive).zero_()
             start_len = torch.cuda.IntTensor(n, 2).zero_()
 
-
             # print('debug', coords.shape, thresh_iou)
-            nActive = ops.ballquery_batch_p_boxiou(coords_min, coords_max, batch_idxs, batch_offsets, idx, start_len, n,
-                                            meanActive, thresh_iou)
+            nActive = ops.ballquery_batch_p_boxiou(
+                coords_min, coords_max, batch_idxs, batch_offsets, idx, start_len, n, meanActive, thresh_iou
+            )
 
-            
             if nActive <= n * meanActive:
                 break
             meanActive = int(nActive // n + 1)
@@ -283,16 +292,15 @@ ballquery_batch_p_boxiou = BallQueryBatchP_BoxIou.apply
 
 
 class BFSCluster(Function):
-
     @staticmethod
     def forward(ctx, cluster_numpoint_mean, ball_query_idxs, start_len, threshold, class_id):
-        '''
+        """
         :param ctx:
         :param ball_query_idxs: (nActive), int
         :param start_len: (N, 2), int
         :return: cluster_idxs:  int (sumNPoint, 2), dim 0 for cluster_id, dim 1 for point idxs in N
         :return: cluster_offsets: int (nCluster + 1)
-        '''
+        """
 
         N = start_len.size(0)
         assert cluster_numpoint_mean.is_contiguous()
@@ -302,8 +310,9 @@ class BFSCluster(Function):
         cluster_idxs = ball_query_idxs.new()
         cluster_offsets = ball_query_idxs.new()
 
-        ops.bfs_cluster(cluster_numpoint_mean, ball_query_idxs, start_len, cluster_idxs,
-                        cluster_offsets, N, threshold, class_id)
+        ops.bfs_cluster(
+            cluster_numpoint_mean, ball_query_idxs, start_len, cluster_idxs, cluster_offsets, N, threshold, class_id
+        )
 
         return cluster_idxs, cluster_offsets
 
@@ -316,15 +325,14 @@ bfs_cluster = BFSCluster.apply
 
 
 class GlobalAvgPool(Function):
-
     @staticmethod
     def forward(ctx, feats, proposals_offset):
-        '''
+        """
         :param ctx:
         :param feats: (sumNPoint, C) float
         :param proposals_offset: (nProposal + 1) int
         :return: output_feats (nProposal, C) float
-        '''
+        """
         nProposal = proposals_offset.size(0) - 1
         sumNPoint, C = feats.size()
 
@@ -356,15 +364,14 @@ global_avg_pool = GlobalAvgPool.apply
 
 
 class SecMean(Function):
-
     @staticmethod
     def forward(ctx, inp, offsets):
-        '''
+        """
         :param ctx:
         :param inp: (N, C) float
         :param offsets: (nProposal + 1) int
         :return: out (nProposal, C) float
-        '''
+        """
         nProposal = offsets.size(0) - 1
         C = inp.size(1)
 
@@ -386,15 +393,14 @@ sec_mean = SecMean.apply
 
 
 class SecMin(Function):
-
     @staticmethod
     def forward(ctx, inp, offsets):
-        '''
+        """
         :param ctx:
         :param inp: (N, C) float
         :param offsets: (nProposal + 1) int
         :return: out (nProposal, C) float
-        '''
+        """
         nProposal = offsets.size(0) - 1
         C = inp.size(1)
 
@@ -416,15 +422,14 @@ sec_min = SecMin.apply
 
 
 class SecMax(Function):
-
     @staticmethod
     def forward(ctx, inp, offsets):
-        '''
+        """
         :param ctx:
         :param inp: (N, C) float
         :param offsets: (nProposal + 1) int
         :return: out (nProposal, C) float
-        '''
+        """
         nProposal = offsets.size(0) - 1
         C = inp.size(1)
 

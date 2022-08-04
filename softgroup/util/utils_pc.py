@@ -5,13 +5,14 @@
 Author: Charles R. Qi and Or Litany
 """
 
-import os
-import sys
-import torch
-
 # Point cloud IO
 import numpy as np
+import torch
 from plyfile import PlyData, PlyElement
+
+import os
+import sys
+
 
 # Mesh IO
 # import trimesh
@@ -63,9 +64,7 @@ def shift_scale_points(pred_xyz, src_range, dst_range=None):
 
     src_diff = src_range[1][:, None, :] - src_range[0][:, None, :]
     dst_diff = dst_range[1][:, None, :] - dst_range[0][:, None, :]
-    prop_xyz = (
-        ((pred_xyz - src_range[0][:, None, :]) * dst_diff) / src_diff
-    ) + dst_range[0][:, None, :]
+    prop_xyz = (((pred_xyz - src_range[0][:, None, :]) * dst_diff) / src_diff) + dst_range[0][:, None, :]
     return prop_xyz
 
 
@@ -82,9 +81,7 @@ def rotate_point_cloud(points, rotation_matrix=None):
     if rotation_matrix is None:
         rotation_angle = np.random.uniform() * 2 * np.pi
         sinval, cosval = np.sin(rotation_angle), np.cos(rotation_angle)
-        rotation_matrix = np.array(
-            [[cosval, sinval, 0], [-sinval, cosval, 0], [0, 0, 1]]
-        )
+        rotation_matrix = np.array([[cosval, sinval, 0], [-sinval, cosval, 0], [0, 0, 1]])
     ctr = points.mean(axis=0)
     rotated_data = np.dot(points - ctr, rotation_matrix) + ctr
     return rotated_data, rotation_matrix

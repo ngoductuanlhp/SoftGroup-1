@@ -1,39 +1,55 @@
 # Modified from https://github.com/facebookresearch/votenet/blob/main/utils/eval_det.py
+import numpy as np
+import torch
+
 import glob
 import os.path as osp
 from multiprocessing import Pool
 
-import numpy as np
-import torch
 
 CLASS_LABELS = [
-    'cabinet', 'bed', 'chair', 'sofa', 'table', 'door', 'window', 'bookshelf', 'picture',
-    'counter', 'desk', 'curtain', 'refrigerator', 'shower curtain', 'toilet', 'sink', 'bathtub',
-    'otherfurniture'
+    "cabinet",
+    "bed",
+    "chair",
+    "sofa",
+    "table",
+    "door",
+    "window",
+    "bookshelf",
+    "picture",
+    "counter",
+    "desk",
+    "curtain",
+    "refrigerator",
+    "shower curtain",
+    "toilet",
+    "sink",
+    "bathtub",
+    "otherfurniture",
 ]
 VALID_CLASS_IDS = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 24, 28, 33, 34, 36, 39]
 
 
 def voc_ap(rec, prec, use_07_metric=False):
-    """ ap = voc_ap(rec, prec, [use_07_metric])
+    """ap = voc_ap(rec, prec, [use_07_metric])
     Compute VOC AP given precision and recall.
     If use_07_metric is true, uses the
     VOC 07 11 point method (default:False).
     """
     if use_07_metric:
         # 11 point metric
-        ap = 0.
-        for t in np.arange(0., 1.1, 0.1):
+        ap = 0.0
+        for t in np.arange(0.0, 1.1, 0.1):
             if np.sum(rec >= t) == 0:
                 p = 0
             else:
                 p = np.max(prec[rec >= t])
-            ap = ap + p / 11.
+            ap = ap + p / 11.0
     else:
         # correct AP calculation
         # first append sentinel values at the end
-        mrec = np.concatenate(([0.], rec, [1.]))
-        mpre = np.concatenate(([0.], prec, [0.]))
+        mrec = np.concatenate(([0.0], rec, [1.0]))
+        mpre = np.concatenate(([0.0], prec, [0.0]))
 
         # compute the precision envelope
         for i in range(mpre.size - 1, 0, -1):
@@ -100,11 +116,11 @@ def eval_det_cls(pred, gt, ovthresh=0.25, use_07_metric=False, get_iou_func=get_
         sphere = np.array(gt[img_id])
         det = [False] * len(sphere)
         npos += len(sphere)
-        class_recs[img_id] = {'sphere': sphere, 'det': det}
+        class_recs[img_id] = {"sphere": sphere, "det": det}
     # pad empty list to all other imgids
     for img_id in pred.keys():
         if img_id not in gt:
-            class_recs[img_id] = {'sphere': np.array([]), 'det': []}
+            class_recs[img_id] = {"sphere": np.array([]), "det": []}
 
     # construct dets
     image_ids = []
@@ -132,7 +148,7 @@ def eval_det_cls(pred, gt, ovthresh=0.25, use_07_metric=False, get_iou_func=get_
         R = class_recs[image_ids[d]]
         bb = BB[d, ...].astype(float)
         ovmax = -np.inf
-        BBGT = R['sphere'].astype(float)
+        BBGT = R["sphere"].astype(float)
 
         if BBGT.size > 0:
             # compute overlaps
@@ -144,13 +160,13 @@ def eval_det_cls(pred, gt, ovthresh=0.25, use_07_metric=False, get_iou_func=get_
 
         # print d, ovmax
         if ovmax > ovthresh:
-            if not R['det'][jmax]:
-                tp[d] = 1.
-                R['det'][jmax] = 1
+            if not R["det"][jmax]:
+                tp[d] = 1.0
+                R["det"][jmax] = 1
             else:
-                fp[d] = 1.
+                fp[d] = 1.0
         else:
-            fp[d] = 1.
+            fp[d] = 1.0
 
     # compute precision recall
     fp = np.cumsum(fp)
@@ -210,9 +226,9 @@ def eval_det(pred_all, gt_all, ovthresh=0.25, use_07_metric=False, get_iou_func=
     prec = {}
     ap = {}
     for classname in gt.keys():
-        rec[classname], prec[classname], ap[classname] = eval_det_cls(pred[classname],
-                                                                      gt[classname], ovthresh,
-                                                                      use_07_metric, get_iou_func)
+        rec[classname], prec[classname], ap[classname] = eval_det_cls(
+            pred[classname], gt[classname], ovthresh, use_07_metric, get_iou_func
+        )
 
     return rec, prec, ap
 
@@ -256,9 +272,14 @@ def eval_sphere(pred_all, gt_all, ovthresh=0.25, use_07_metric=False, get_iou_fu
     prec = {}
     ap = {}
     p = Pool(processes=10)
-    ret_values = p.map(eval_det_cls_wrapper,
-                       [(pred[classname], gt[classname], ovthresh, use_07_metric, get_iou_func)
-                        for classname in gt.keys() if classname in pred])
+    ret_values = p.map(
+        eval_det_cls_wrapper,
+        [
+            (pred[classname], gt[classname], ovthresh, use_07_metric, get_iou_func)
+            for classname in gt.keys()
+            if classname in pred
+        ],
+    )
     p.close()
     for i, classname in enumerate(gt.keys()):
         if classname in pred:
@@ -271,20 +292,20 @@ def eval_sphere(pred_all, gt_all, ovthresh=0.25, use_07_metric=False, get_iou_fu
     return rec, prec, ap
 
 
-if __name__ == '__main__':
-    data_path = './dataset/scannetv2/val/'
-    prediction_path = './exp/scannetv2/softgroup/softgroup_default_scannet/result/val'
+if __name__ == "__main__":
+    data_path = "./dataset/scannetv2/val/"
+    prediction_path = "./exp/scannetv2/softgroup/softgroup_default_scannet/result/val"
     iou_threshold = 0.25  # adjust threshold here
-    instance_paths = glob.glob(osp.join(prediction_path, '*.txt'))
+    instance_paths = glob.glob(osp.join(prediction_path, "*.txt"))
     instance_paths.sort()
 
     def single_process(instance_path):
         img_id = osp.basename(instance_path)[:-4]
-        print('Processing', img_id)
-        gt = osp.join(data_path, img_id + '_inst_nostuff.pth')  # 0-based index
+        print("Processing", img_id)
+        gt = osp.join(data_path, img_id + "_inst_nostuff.pth")  # 0-based index
         assert osp.isfile(gt)
         coords, rgb, semantic_label, instance_label = torch.load(gt)
-        pred_infos = open(instance_path, 'r').readlines()
+        pred_infos = open(instance_path, "r").readlines()
         pred_infos = [x.rstrip().split() for x in pred_infos]  # nyu_id index
         mask_path, labels, scores = list(zip(*pred_infos))
         pred = []
@@ -323,8 +344,8 @@ if __name__ == '__main__':
         pred_all[img_id] = pred
         gt_all[img_id] = gt
 
-    print('Evaluating...')
+    print("Evaluating...")
     eval_res = eval_sphere(pred_all, gt_all, ovthresh=iou_threshold)
     aps = list(eval_res[-1].values())
     mAP = np.mean(aps)
-    print('mAP:', mAP)
+    print("mAP:", mAP)

@@ -1,15 +1,19 @@
-import os, sys, glob, math, numpy as np
+import numpy as np
 import torch
 
-from typing import Dict, List, Sequence, Tuple, Union
+import glob
+import math
 import open3d as o3d
+import os
+import sys
 import torch_scatter
+from typing import Dict, List, Sequence, Tuple, Union
 
-sys.path.append('../')
 
-import time
+sys.path.append("../")
 
 import segmentator
+import time
 
 
 def get_superpoint(mesh_file):
@@ -22,7 +26,6 @@ def get_superpoint(mesh_file):
     return superpoint
 
 
-
 # files = glob.glob('/home/ubuntu/3dis_ws/SoftGroup/dataset/scannetv2/scans/*_vh_clean_2.ply')
 
 # for file in files:
@@ -33,7 +36,7 @@ def get_superpoint(mesh_file):
 #     torch.save(spp, os.path.join('/home/ubuntu/3dis_ws/SoftGroup/dataset/scannetv2/superpoints', scene_name+'.pth'))
 #     # np.save(os.path.join('/home/ubuntu/3dis_ws/SoftGroup/dataset/scannetv2/superpoints', scene_name+'.npy'), spp)
 
-spp = torch.load('/home/ubuntu/3dis_ws/SoftGroup/dataset/scannetv2/superpoints/scene0000_00.pth')
+spp = torch.load("/home/ubuntu/3dis_ws/SoftGroup/dataset/scannetv2/superpoints/scene0000_00.pth")
 # print(torch.unique(spp, return_counts=True))
 n_points = spp.shape[0]
 
@@ -43,9 +46,9 @@ n_ssp = ssp_unique.shape[0]
 
 inst_mask = (torch.rand(n_points) > 0.5).int()
 
-sum_spp_inst = torch_scatter.scatter(inst_mask, ssp_ids) # n_ssp
+sum_spp_inst = torch_scatter.scatter(inst_mask, ssp_ids)  # n_ssp
 
-ssp_mask = (2*sum_spp_inst >= spp_len)
+ssp_mask = 2 * sum_spp_inst >= spp_len
 
 refine_mask = ssp_mask[ssp_ids]
 print(ssp_mask.shape, refine_mask.shape)

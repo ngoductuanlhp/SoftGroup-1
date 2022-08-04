@@ -1,13 +1,12 @@
-import math
-import os.path as osp
-from glob import glob
-
 import numpy as np
 import scipy.interpolate
 import scipy.ndimage
 import torch
 from torch.utils.data import Dataset
 
+import math
+import os.path as osp
+from glob import glob
 from ..ops import voxelization_idx
 
 
@@ -15,15 +14,7 @@ class CustomDataset(Dataset):
 
     CLASSES = None
 
-    def __init__(self,
-                 data_root,
-                 prefix,
-                 suffix,
-                 voxel_cfg=None,
-                 training=True,
-                 repeat=1,
-                 logger=None,
-                 lite=False):
+    def __init__(self, data_root, prefix, suffix, voxel_cfg=None, training=True, repeat=1, logger=None, lite=False):
         self.data_root = data_root
         self.prefix = prefix
         self.suffix = suffix
@@ -31,20 +22,20 @@ class CustomDataset(Dataset):
         self.training = training
         self.repeat = repeat
         self.logger = logger
-        self.mode = 'train' if training else 'test'
+        self.mode = "train" if training else "test"
         self.lite = lite
         self.filenames = self.get_filenames()
 
         if self.lite:
-            self.logger.info('Only load lite dataset (/10)')
+            self.logger.info("Only load lite dataset (/10)")
             self.filenames = self.filenames[::10]
-        self.logger.info(f'Load {self.mode} dataset: {len(self.filenames)} scans')
+        self.logger.info(f"Load {self.mode} dataset: {len(self.filenames)} scans")
 
         # self.filenames = self.filenames[:50]
 
     def get_filenames(self):
-        filenames = glob(osp.join(self.data_root, self.prefix, '*' + self.suffix))
-        assert len(filenames) > 0, 'Empty dataset.'
+        filenames = glob(osp.join(self.data_root, self.prefix, "*" + self.suffix))
+        assert len(filenames) > 0, "Empty dataset."
         filenames = sorted(filenames * self.repeat)
         return filenames
 
@@ -55,23 +46,20 @@ class CustomDataset(Dataset):
         return len(self.filenames)
 
     def elastic(self, x, gran, mag):
-        blur0 = np.ones((3, 1, 1)).astype('float32') / 3
-        blur1 = np.ones((1, 3, 1)).astype('float32') / 3
-        blur2 = np.ones((1, 1, 3)).astype('float32') / 3
+        blur0 = np.ones((3, 1, 1)).astype("float32") / 3
+        blur1 = np.ones((1, 3, 1)).astype("float32") / 3
+        blur2 = np.ones((1, 1, 3)).astype("float32") / 3
 
         bb = np.abs(x).max(0).astype(np.int32) // gran + 3
-        noise = [np.random.randn(bb[0], bb[1], bb[2]).astype('float32') for _ in range(3)]
-        noise = [scipy.ndimage.filters.convolve(n, blur0, mode='constant', cval=0) for n in noise]
-        noise = [scipy.ndimage.filters.convolve(n, blur1, mode='constant', cval=0) for n in noise]
-        noise = [scipy.ndimage.filters.convolve(n, blur2, mode='constant', cval=0) for n in noise]
-        noise = [scipy.ndimage.filters.convolve(n, blur0, mode='constant', cval=0) for n in noise]
-        noise = [scipy.ndimage.filters.convolve(n, blur1, mode='constant', cval=0) for n in noise]
-        noise = [scipy.ndimage.filters.convolve(n, blur2, mode='constant', cval=0) for n in noise]
+        noise = [np.random.randn(bb[0], bb[1], bb[2]).astype("float32") for _ in range(3)]
+        noise = [scipy.ndimage.filters.convolve(n, blur0, mode="constant", cval=0) for n in noise]
+        noise = [scipy.ndimage.filters.convolve(n, blur1, mode="constant", cval=0) for n in noise]
+        noise = [scipy.ndimage.filters.convolve(n, blur2, mode="constant", cval=0) for n in noise]
+        noise = [scipy.ndimage.filters.convolve(n, blur0, mode="constant", cval=0) for n in noise]
+        noise = [scipy.ndimage.filters.convolve(n, blur1, mode="constant", cval=0) for n in noise]
+        noise = [scipy.ndimage.filters.convolve(n, blur2, mode="constant", cval=0) for n in noise]
         ax = [np.linspace(-(b - 1) * gran, (b - 1) * gran, b) for b in bb]
-        interp = [
-            scipy.interpolate.RegularGridInterpolator(ax, n, bounds_error=0, fill_value=0)
-            for n in noise
-        ]
+        interp = [scipy.interpolate.RegularGridInterpolator(ax, n, bounds_error=0, fill_value=0) for n in noise]
 
         def g(x_):
             return np.hstack([i(x_)[:, None] for i in interp])
@@ -85,15 +73,15 @@ class CustomDataset(Dataset):
         instance_box = []
         instance_num = int(instance_label.max()) + 1
 
-        pt_offset_vertices_label = np.ones((xyz.shape[0], 3*2), dtype=np.float32) * -100.0
-        
+        pt_offset_vertices_label = np.ones((xyz.shape[0], 3 * 2), dtype=np.float32) * -100.0
+
         # pt_offset_vertices_label = np.ones((xyz.shape[0], 3*8), dtype=np.float32) * -100.0
 
         for i_ in range(instance_num):
             inst_idx_i = np.where(instance_label == i_)
             xyz_i = xyz[inst_idx_i]
 
-            centroid  = xyz_i.mean(0)
+            centroid = xyz_i.mean(0)
             pt_mean[inst_idx_i] = centroid
 
             min_xyz_i = xyz_i.min(0)
@@ -101,7 +89,6 @@ class CustomDataset(Dataset):
 
             pt_offset_vertices_label[inst_idx_i, 0:3] = min_xyz_i - xyz_i
             pt_offset_vertices_label[inst_idx_i, 3:6] = max_xyz_i - xyz_i
-
 
             # min_x_i = xyz_i[np.argmin(xyz_i[:,0])]
             # min_y_i = xyz_i[np.argmin(xyz_i[:,1])]
@@ -117,7 +104,7 @@ class CustomDataset(Dataset):
             # pt_offset_vertices_label[inst_idx_i, 15:18] = max_x_i - xyz_i
             # pt_offset_vertices_label[inst_idx_i, 18:21] = max_y_i - xyz_i
             # pt_offset_vertices_label[inst_idx_i, 21:24] = max_z_i - xyz_i
-            
+
             instance_box.append(np.concatenate([min_xyz_i, max_xyz_i], axis=0))
 
             instance_pointnum.append(inst_idx_i[0].size)
@@ -126,7 +113,7 @@ class CustomDataset(Dataset):
 
         pt_offset_label = pt_mean - xyz
 
-        instance_box = np.stack(instance_box, axis=0) # N, 6
+        instance_box = np.stack(instance_box, axis=0)  # N, 6
         return instance_num, instance_pointnum, instance_cls, instance_box, pt_offset_label, pt_offset_vertices_label
 
     def dataAugment(self, xyz, jitter=False, flip=False, rot=False, prob=1.0):
@@ -137,13 +124,15 @@ class CustomDataset(Dataset):
             m[0][0] *= np.random.randint(0, 2) * 2 - 1
         if rot and np.random.rand() < prob:
             theta = np.random.rand() * 2 * math.pi
-            m = np.matmul(m, [[math.cos(theta), math.sin(theta), 0],
-                              [-math.sin(theta), math.cos(theta), 0], [0, 0, 1]])
+            m = np.matmul(
+                m, [[math.cos(theta), math.sin(theta), 0], [-math.sin(theta), math.cos(theta), 0], [0, 0, 1]]
+            )
         else:
             # Empirically, slightly rotate the scene can match the results from checkpoint
             theta = 0.35 * math.pi
-            m = np.matmul(m, [[math.cos(theta), math.sin(theta), 0],
-                              [-math.sin(theta), math.cos(theta), 0], [0, 0, 1]])
+            m = np.matmul(
+                m, [[math.cos(theta), math.sin(theta), 0], [-math.sin(theta), math.cos(theta), 0], [0, 0, 1]]
+            )
 
         return np.matmul(xyz, m)
 
@@ -153,7 +142,7 @@ class CustomDataset(Dataset):
         assert valid_idxs.sum() == xyz.shape[0]
         spatial_shape = np.array([self.voxel_cfg.spatial_shape[1]] * 3)
         room_range = xyz.max(0) - xyz.min(0)
-        while (valid_idxs.sum() > self.voxel_cfg.max_npoint):
+        while valid_idxs.sum() > self.voxel_cfg.max_npoint:
             step_temp = step
             if valid_idxs.sum() > 1e6:
                 step_temp = step * 2
@@ -166,8 +155,8 @@ class CustomDataset(Dataset):
     def getCroppedInstLabel(self, instance_label, valid_idxs):
         instance_label = instance_label[valid_idxs]
         j = 0
-        while (j < instance_label.max()):
-            if (len(np.where(instance_label == j)[0]) == 0):
+        while j < instance_label.max():
+            if len(np.where(instance_label == j)[0]) == 0:
                 instance_label[instance_label == instance_label.max()] = j
             j += 1
         return instance_label
@@ -177,13 +166,12 @@ class CustomDataset(Dataset):
         xyz = xyz_middle * self.voxel_cfg.scale
         if np.random.rand() < aug_prob:
             xyz = self.elastic(xyz, 6 * self.voxel_cfg.scale // 50, 40 * self.voxel_cfg.scale / 50)
-            xyz = self.elastic(xyz, 20 * self.voxel_cfg.scale // 50,
-                               160 * self.voxel_cfg.scale / 50)
+            xyz = self.elastic(xyz, 20 * self.voxel_cfg.scale // 50, 160 * self.voxel_cfg.scale / 50)
         # xyz_middle = xyz / self.voxel_cfg.scale
 
         xyz = xyz - xyz.min(0)
         max_tries = 5
-        while (max_tries > 0):
+        while max_tries > 0:
             xyz_offset, valid_idxs = self.crop(xyz)
             if valid_idxs.sum() >= self.voxel_cfg.min_npoint:
                 xyz = xyz_offset
@@ -210,13 +198,17 @@ class CustomDataset(Dataset):
 
     def __getitem__(self, index):
         filename = self.filenames[index]
-        scan_id = osp.basename(filename).replace(self.suffix, '')
+        scan_id = osp.basename(filename).replace(self.suffix, "")
         xyz, rgb, semantic_label, instance_label = self.load(filename)
 
-        spp_filename = osp.join('dataset/scannetv2/superpoints', scan_id+'.pth')
+        spp_filename = osp.join("dataset/scannetv2/superpoints", scan_id + ".pth")
         spp = self.load(spp_filename)
 
-        data = self.transform_train(xyz, rgb, semantic_label, instance_label, spp) if self.training else self.transform_test(xyz, rgb, semantic_label, instance_label, spp)
+        data = (
+            self.transform_train(xyz, rgb, semantic_label, instance_label, spp)
+            if self.training
+            else self.transform_test(xyz, rgb, semantic_label, instance_label, spp)
+        )
         if data is None:
             return None
         xyz, xyz_middle, rgb, semantic_label, instance_label, spp = data
@@ -243,9 +235,21 @@ class CustomDataset(Dataset):
         # assert torch.all(torch.tensor(inst_cls) >= 0)
         # assert torch.all(sem_inds >= 2)
 
-
-        return (scan_id, coord, coord_float, feat, semantic_label, instance_label, spp, inst_num,
-                inst_pointnum, inst_cls, inst_box, pt_offset_label, pt_offset_vertices_label)
+        return (
+            scan_id,
+            coord,
+            coord_float,
+            feat,
+            semantic_label,
+            instance_label,
+            spp,
+            inst_num,
+            inst_pointnum,
+            inst_cls,
+            inst_box,
+            pt_offset_label,
+            pt_offset_vertices_label,
+        )
 
     def collate_fn(self, batch):
         scan_ids = []
@@ -268,15 +272,26 @@ class CustomDataset(Dataset):
         pc_mins = []
         pc_maxs = []
 
-
-
         total_inst_num = 0
         batch_id = 0
         for data in batch:
             if data is None:
                 continue
-            (scan_id, coord, coord_float, feat, semantic_label, instance_label, spp, inst_num,
-             inst_pointnum, inst_cls, inst_box, pt_offset_label, pt_offset_vertices_label) = data
+            (
+                scan_id,
+                coord,
+                coord_float,
+                feat,
+                semantic_label,
+                instance_label,
+                spp,
+                inst_num,
+                inst_pointnum,
+                inst_cls,
+                inst_box,
+                pt_offset_label,
+                pt_offset_vertices_label,
+            ) = data
             instance_label[np.where(instance_label != -100)] += total_inst_num
             total_inst_num += inst_num
             scan_ids.append(scan_id)
@@ -298,9 +313,9 @@ class CustomDataset(Dataset):
             pc_maxs.append(torch.max(coord_float, dim=0)[0])
 
             batch_id += 1
-        assert batch_id > 0, 'empty batch'
+        assert batch_id > 0, "empty batch"
         if batch_id < len(batch):
-            self.logger.info(f'batch is truncated from size {len(batch)} to {batch_id}')
+            self.logger.info(f"batch is truncated from size {len(batch)} to {batch_id}")
 
         # merge all the scenes in the batch
         coords = torch.cat(coords, 0)  # long (N, 1 + 3), the batch item idx is put in coords[:, 0]
@@ -313,7 +328,7 @@ class CustomDataset(Dataset):
 
         instance_pointnum = torch.tensor(instance_pointnum, dtype=torch.int)  # int (total_nInst)
         instance_cls = torch.tensor(instance_cls, dtype=torch.long)  # long (total_nInst)
-        instance_box = torch.cat(instance_box, dim=0).float() # (total_nInst, 6)
+        instance_box = torch.cat(instance_box, dim=0).float()  # (total_nInst, 6)
         instance_batch_offsets = torch.tensor(instance_batch_offsets, dtype=torch.long)
         pt_offset_labels = torch.cat(pt_offset_labels).float()
         pt_offset_vertices_labels = torch.cat(pt_offset_vertices_labels).float()
@@ -323,34 +338,33 @@ class CustomDataset(Dataset):
         pt_offset_vertices_labels = None
 
         pc_mins = torch.stack(pc_mins)
-        pc_maxs = torch.stack(pc_maxs) # batch, 3
+        pc_maxs = torch.stack(pc_maxs)  # batch, 3
 
-        pc_dims = torch.stack([pc_mins, pc_maxs], dim=0) # 2, batch, 3
+        pc_dims = torch.stack([pc_mins, pc_maxs], dim=0)  # 2, batch, 3
 
         # spatial_shape = np.array([768, 768, 400])
-        spatial_shape = np.clip(
-            coords.max(0)[0][1:].numpy() + 1, self.voxel_cfg.spatial_shape[0], None)
+        spatial_shape = np.clip(coords.max(0)[0][1:].numpy() + 1, self.voxel_cfg.spatial_shape[0], None)
         voxel_coords, v2p_map, p2v_map = voxelization_idx(coords, batch_id)
         return {
-            'scan_ids': scan_ids,
-            'coords': coords,
-            'batch_idxs': batch_idxs,
-            'voxel_coords': voxel_coords,
-            'p2v_map': p2v_map,
-            'v2p_map': v2p_map,
-            'coords': coords,
-            'coords_float': coords_float,
-            'feats': feats,
-            'semantic_labels': semantic_labels,
-            'instance_labels': instance_labels,
-            'spps': spps,
-            'instance_pointnum': instance_pointnum,
-            'instance_cls': instance_cls,
-            'instance_box': instance_box,
-            'instance_batch_offsets': instance_batch_offsets,
-            'pt_offset_labels': pt_offset_labels,
-            'pt_offset_vertices_labels': pt_offset_vertices_labels,
-            'spatial_shape': spatial_shape,
-            'batch_size': batch_id,
-            'pc_dims': pc_dims
+            "scan_ids": scan_ids,
+            "coords": coords,
+            "batch_idxs": batch_idxs,
+            "voxel_coords": voxel_coords,
+            "p2v_map": p2v_map,
+            "v2p_map": v2p_map,
+            "coords": coords,
+            "coords_float": coords_float,
+            "feats": feats,
+            "semantic_labels": semantic_labels,
+            "instance_labels": instance_labels,
+            "spps": spps,
+            "instance_pointnum": instance_pointnum,
+            "instance_cls": instance_cls,
+            "instance_box": instance_box,
+            "instance_batch_offsets": instance_batch_offsets,
+            "pt_offset_labels": pt_offset_labels,
+            "pt_offset_vertices_labels": pt_offset_vertices_labels,
+            "spatial_shape": spatial_shape,
+            "batch_size": batch_id,
+            "pc_dims": pc_dims,
         }

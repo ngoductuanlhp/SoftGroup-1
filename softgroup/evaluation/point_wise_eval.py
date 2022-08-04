@@ -8,7 +8,7 @@ def evaluate_semantic_acc(pred_list, gt_list, ignore_label=-100, logger=None):
     correct = (gt[gt != ignore_label] == pred[gt != ignore_label]).sum()
     whole = (gt != ignore_label).sum()
     acc = correct.astype(float) / whole * 100
-    logger.info(f'Acc: {acc:.1f}')
+    logger.info(f"Acc: {acc:.1f}")
     return acc
 
 
@@ -27,8 +27,8 @@ def evaluate_semantic_miou(pred_list, gt_list, ignore_label=-100, logger=None):
             iou = intersection.astype(float) / union * 100
             iou_list.append(iou)
     miou = np.mean(iou_list)
-    logger.info('Class-wise mIoU: ' + ' '.join(f'{x:.1f}' for x in iou_list))
-    logger.info(f'mIoU: {miou:.1f}')
+    logger.info("Class-wise mIoU: " + " ".join(f"{x:.1f}" for x in iou_list))
+    logger.info(f"mIoU: {miou:.1f}")
     return miou
 
 
@@ -40,8 +40,9 @@ def evaluate_offset_mae(pred_list, gt_list, gt_instance_list, ignore_label=-100,
     gt = gt[pos_inds]
     pred = pred[pos_inds]
     mae = np.abs(gt - pred).sum() / pos_inds.sum()
-    logger.info(f'Offset MAE: {mae:.3f}')
+    logger.info(f"Offset MAE: {mae:.3f}")
     return mae
+
 
 class PointWiseEval(object):
     def __init__(self, num_classes=20, ignore_label=-100) -> None:
@@ -59,7 +60,6 @@ class PointWiseEval(object):
         self.debug_acc = []
         self.debug_acc_num_pos = []
 
-
     def update(self, pred_sem, pred_offset, gt_sem, gt_offset, gt_instance):
         pos_inds = gt_sem != self.ignore_label
 
@@ -72,8 +72,8 @@ class PointWiseEval(object):
 
         # hack for bin counting 2 arrays together
         x = pred_sem + self.num_classes * gt_sem
-        bincount_2d = np.bincount(x.astype(np.int32), minlength=self.num_classes ** 2)
-        assert bincount_2d.size == self.num_classes ** 2
+        bincount_2d = np.bincount(x.astype(np.int32), minlength=self.num_classes**2)
+        assert bincount_2d.size == self.num_classes**2
         conf = bincount_2d.reshape((self.num_classes, self.num_classes))
         self.conf_metric += conf
         # print(conf)
@@ -88,7 +88,6 @@ class PointWiseEval(object):
     def update_debug_acc(self, acc, num_pos):
         self.debug_acc.append(acc)
         self.debug_acc_num_pos.append(num_pos)
-        
 
     def get_eval(self, logger):
         # mIoU
@@ -97,23 +96,23 @@ class PointWiseEval(object):
         false_negative = np.sum(self.conf_metric, 1) - true_positive
 
         # Just in case we get a division by 0, ignore/hide the error
-        with np.errstate(divide='ignore', invalid='ignore'):
+        with np.errstate(divide="ignore", invalid="ignore"):
             iou = true_positive / (true_positive + false_positive + false_negative)
             iou = iou * 100
         miou = np.nanmean(iou)
-        logger.info('Class-wise mIoU: ' + ' '.join(f'{iou[i]:.1f}' for i in range(iou.shape[0])))
-        logger.info(f'mIoU: {miou:.1f}')
+        logger.info("Class-wise mIoU: " + " ".join(f"{iou[i]:.1f}" for i in range(iou.shape[0])))
+        logger.info(f"mIoU: {miou:.1f}")
 
         # semantic accuracy
-        acc = np.sum(np.array(self.sem_acc_arr)) / np.sum(np.array(self.pos_inds_arr))  * 100
-        logger.info(f'Acc: {acc:.1f}')
+        acc = np.sum(np.array(self.sem_acc_arr)) / np.sum(np.array(self.pos_inds_arr)) * 100
+        logger.info(f"Acc: {acc:.1f}")
 
         # offset mae
         mae = np.sum(np.array(self.mae_arr)) / np.sum(np.array(self.pos_inds_inst_arr))
-        logger.info(f'Offset MAE: {mae:.3f}')
+        logger.info(f"Offset MAE: {mae:.3f}")
 
         if len(self.debug_acc) > 0:
             debug_acc = np.sum(np.array(self.debug_acc)) / np.sum(np.array(self.debug_acc_num_pos))
-            logger.info('Mean accuracy of classification: {:.3f}'.format(debug_acc))
+            logger.info("Mean accuracy of classification: {:.3f}".format(debug_acc))
 
         return miou, acc, mae
