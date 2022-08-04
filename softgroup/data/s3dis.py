@@ -78,7 +78,7 @@ class S3DISDataset(CustomDataset):
 
         # assume 1 scan only
         (scan_id, coord, coord_float, feat, semantic_label, instance_label, inst_num, inst_pointnum,
-         inst_cls, pt_offset_label) = batch[0]
+         inst_cls, pt_offset_label, pt_offset_vertices_label) = batch[0]
         scan_ids = [scan_id]
         coords = coord.long()
         batch_idxs = torch.zeros_like(coord[:, 0].int())
@@ -89,6 +89,7 @@ class S3DISDataset(CustomDataset):
         instance_pointnum = torch.tensor([inst_pointnum], dtype=torch.int)
         instance_cls = torch.tensor([inst_cls], dtype=torch.long)
         pt_offset_labels = pt_offset_label.float()
+        pt_offset_vertices_labels = pt_offset_vertices_label.float()
         spatial_shape = np.clip((coords.max(0)[0][1:] + 1).numpy(), self.voxel_cfg.spatial_shape[0],
                                 None)
         voxel_coords, v2p_map, p2v_map = voxelization_idx(coords, 4)
@@ -105,6 +106,7 @@ class S3DISDataset(CustomDataset):
             'instance_pointnum': instance_pointnum,
             'instance_cls': instance_cls,
             'pt_offset_labels': pt_offset_labels,
+            'pt_offset_vertices_labels': pt_offset_vertices_labels,
             'spatial_shape': spatial_shape,
             'batch_size': 4
         }

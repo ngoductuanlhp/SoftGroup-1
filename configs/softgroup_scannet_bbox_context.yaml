@@ -89,5 +89,5 @@ fp16: True
 epochs: 64
 step_epoch: 25
 save_freq: 4
-pretrain: 'pretrains/best_pretrain_bbox_context_iou_conf_no_coord_embed.pth'
+pretrain: 'pretrains/best_pretrain.pth'
 work_dir: ''

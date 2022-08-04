@@ -107,7 +107,7 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
         results = collect_results_gpu(results, len(val_set))
 
     if is_main_process():
-        point_eval = PointWiseEval()
+        point_eval = PointWiseEval(num_classes=cfg.model.semantic_classes)
         for res in results:
             point_eval.update(res['semantic_preds'], res['offset_preds'], res['semantic_labels'], res['offset_labels'], res['instance_labels'])
             if not cfg.model.semantic_only:
