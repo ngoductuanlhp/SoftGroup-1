@@ -115,86 +115,79 @@ def train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer):
 
 def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
     logger.info("Validation")
-    results = []
-    all_sem_preds, all_sem_labels, all_offset_preds, all_offset_labels = [], [], [], []
+    # results = []
+    # all_sem_preds, all_sem_labels, all_offset_preds, all_offset_labels = [], [], [], []
     all_inst_labels, all_pred_insts, all_gt_insts = [], [], []
     all_debug_accu = []
-    coords = []
+    # coords = []
 
-    _, world_size = get_dist_info()
-    progress_bar = tqdm(total=len(val_loader) * world_size, disable=not is_main_process())
+    # _, world_size = get_dist_info()
+    # progress_bar = tqdm(total=len(val_loader) * world_size, disable=not is_main_process())
     val_set = val_loader.dataset
+
+    point_eval = PointWiseEval(num_classes=cfg.model.semantic_classes)
+    scannet_eval = ScanNetEval(val_set.CLASSES)
+
     with torch.no_grad():
         model.eval()
         for i, batch in enumerate(val_loader):
             with torch.cuda.amp.autocast(enabled=cfg.fp16):
                 result = model(batch)
-            if isinstance(result, list):
-                results.extend(result)
-            else:
-                results.append(result)
-            progress_bar.update(world_size)
-        progress_bar.close()
-        results = collect_results_gpu(results, len(val_set))
 
-    if is_main_process():
-        point_eval = PointWiseEval()
-        scannet_eval = ScanNetEval(val_set.CLASSES)
-        for res in results:
-            if cfg.model.semantic_only:
-                point_eval.update(
-                    res["semantic_preds"],
-                    res["offset_preds"],
-                    res["semantic_labels"],
-                    res["offset_labels"],
-                    res["instance_labels"],
-                )
-            else:
-                all_pred_insts.append(res["pred_instances"])
-                all_gt_insts.append(res["gt_instances"])
-                # coords.append(res['coords_float'])
+            if i % 10 == 0:
+                logger.info(f"Infer scene {i+1}/{len(val_set)}")
 
-        del results
+            if not isinstance(result, list):
+                result = [result]
 
-        global best_metric
+            for res in result:
+                if cfg.model.semantic_only:
+                    point_eval.update(res['semantic_preds'], res['offset_preds'], res['semantic_labels'], res['offset_labels'], res['instance_labels'])
+                else:
+                    all_pred_insts.append(res['pred_instances'])
+                    all_gt_insts.append(res['gt_instances'])
 
-        if cfg.model.semantic_only:
-            logger.info("Evaluate semantic segmentation and offset MAE")
-            miou, acc, mae = point_eval.get_eval(logger)
 
-            writer.add_scalar("val/mIoU", miou, epoch)
-            writer.add_scalar("val/Acc", acc, epoch)
-            writer.add_scalar("val/Offset MAE", mae, epoch)
 
-            if best_metric < miou:
-                best_metric = miou
-                checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq, best=True)
+    global best_metric
 
-        else:
-            logger.info("Evaluate instance segmentation")
+    if cfg.model.semantic_only:
+        logger.info("Evaluate semantic segmentation and offset MAE")
+        miou, acc, mae = point_eval.get_eval(logger)
 
-            # logger.info('Evaluate axis-align box prediction')
-            # eval_res = scannet_eval.evaluate_box(all_pred_insts, all_gt_insts, coords)
+        writer.add_scalar("val/mIoU", miou, epoch)
+        writer.add_scalar("val/Acc", acc, epoch)
+        writer.add_scalar("val/Offset MAE", mae, epoch)
 
-            eval_res = scannet_eval.evaluate(all_pred_insts, all_gt_insts)
-            del all_pred_insts, all_gt_insts
+        if best_metric < miou:
+            best_metric = miou
+            checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq, best=True)
 
-            writer.add_scalar("val/AP", eval_res["all_ap"], epoch)
-            writer.add_scalar("val/AP_50", eval_res["all_ap_50%"], epoch)
-            writer.add_scalar("val/AP_25", eval_res["all_ap_25%"], epoch)
-            logger.info(
-                "AP: {:.3f}. AP_50: {:.3f}. AP_25: {:.3f}".format(
-                    eval_res["all_ap"], eval_res["all_ap_50%"], eval_res["all_ap_25%"]
-                )
+    else:
+        logger.info("Evaluate instance segmentation")
+
+        # logger.info('Evaluate axis-align box prediction')
+        # eval_res = scannet_eval.evaluate_box(all_pred_insts, all_gt_insts, coords)
+
+        eval_res = scannet_eval.evaluate(all_pred_insts, all_gt_insts)
+        del all_pred_insts, all_gt_insts
+
+        writer.add_scalar("val/AP", eval_res["all_ap"], epoch)
+        writer.add_scalar("val/AP_50", eval_res["all_ap_50%"], epoch)
+        writer.add_scalar("val/AP_25", eval_res["all_ap_25%"], epoch)
+        logger.info(
+            "AP: {:.3f}. AP_50: {:.3f}. AP_25: {:.3f}".format(
+                eval_res["all_ap"], eval_res["all_ap_50%"], eval_res["all_ap_25%"]
             )
+        )
 
-            # if len(all_debug_accu) > 0:
-            #     accu = np.mean(np.array(all_debug_accu))
-            #     logger.info('Mean accuracy of classification: {:.3f}'.format(accu))
+        # if len(all_debug_accu) > 0:
+        #     accu = np.mean(np.array(all_debug_accu))
+        #     logger.info('Mean accuracy of classification: {:.3f}'.format(accu))
 
-            if best_metric < eval_res["all_ap"]:
-                best_metric = eval_res["all_ap"]
-                checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq, best=True)
+        if best_metric < eval_res["all_ap"]:
+            best_metric = eval_res["all_ap"]
+            checkpoint_save(epoch, model, optimizer, cfg.work_dir, cfg.save_freq, best=True)
 
 
 def main():
@@ -250,7 +243,10 @@ def main():
     # val_set2 = build_dataset(cfg.data.test2, logger)
 
     train_loader = build_dataloader(train_set, training=True, dist=args.dist, **cfg.dataloader.train)
-    val_loader = build_dataloader(val_set, training=False, dist=args.dist, **cfg.dataloader.test)
+
+    # NOTE only validate on single GPU
+    val_loader = build_dataloader(val_set, training=False, dist=False, **cfg.dataloader.test)
+    # val_loader = build_dataloader(val_set, training=False, dist=args.dist, **cfg.dataloader.test)
     # val_loader2 = build_dataloader(val_set2, training=False, dist=args.dist, **cfg.dataloader.test)
     # optim
     optimizer = build_optimizer(model, cfg.optimizer)
@@ -274,7 +270,7 @@ def main():
 
     for epoch in range(start_epoch, cfg.epochs + 1):
         train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer)
-        if not args.skip_validate and (is_multiple(epoch, cfg.save_freq) or is_power2(epoch)):
+        if not args.skip_validate and (is_multiple(epoch, cfg.save_freq) or is_power2(epoch)) and is_main_process():
             validate(epoch, model, optimizer, val_loader, cfg, logger, writer)
 
             # logger.info('\nvalidate on trainsmall set\n')

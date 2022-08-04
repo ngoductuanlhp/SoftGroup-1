@@ -103,7 +103,7 @@ def main():
 
     dataset = build_dataset(cfg.data.test, logger, lite=args.save_lite)
     dataloader = build_dataloader(dataset, training=False, dist=args.dist, **cfg.dataloader.test)
-    results = []
+    # results = []
     scan_ids, coords, sem_preds, sem_labels, offset_preds, offset_vertices_preds, offset_labels = (
         [],
         [],
@@ -118,58 +118,39 @@ def main():
     nmc_insts = []
     box_preds, box_gt = {}, {}
 
-    _, world_size = get_dist_info()
-
+    # _, world_size = get_dist_info()
+    
+    point_eval = PointWiseEval(num_classes=cfg.model.semantic_classes)
+    scannet_eval = ScanNetEval(dataset.CLASSES)
     # progress_bar = tqdm(total=len(dataloader) * world_size, disable=not is_main_process())
     with torch.no_grad():
         model.eval()
         for i, batch in enumerate(dataloader):
-            # if args.save_lite and i % 10 != 0:
-            #     continue
-
             with torch.cuda.amp.autocast(enabled=cfg.fp16):
                 result = model(batch)
-            if isinstance(result, list):
-                results.extend(result)
-            else:
-                results.append(result)
 
-            # if i % 10 == 0:
-            logger.info(f"Infer scene {i+1}/{len(dataloader)}")
-        #     progress_bar.update(world_size)
-        # progress_bar.close()
-        results = collect_results_gpu(results, len(dataset))
+            if i % 10 == 0:
+                logger.info(f"Infer scene {i+1}/{len(dataset)}")
 
-    # print('mean redundant', np.mean(np.asarray(model.redundants)))
-    if is_main_process():
-        point_eval = PointWiseEval()
-        scannet_eval = ScanNetEval(dataset.CLASSES)
-        for res in results:
-            scan_ids.append(res["scan_id"])
+            if not isinstance(result, list):
+                result = [result]
 
-            if "debug_accu" in res:
-                point_eval.update_debug_acc(res["debug_accu"], res["debug_accu_num_pos"])
+            for res in result:
+                if cfg.model.semantic_only:
+                    point_eval.update(res['semantic_preds'], res['offset_preds'], res['semantic_labels'], res['offset_labels'], res['instance_labels'])
+                else:
+                    pred_insts.append(res['pred_instances'])
+                    gt_insts.append(res['gt_instances'])
 
-            if cfg.save_cfg.offset_vertices:
-                offset_vertices_preds.append(res["offset_vertices_preds"])
-            if cfg.save_cfg.semantic:
-                sem_preds.append(res["semantic_preds"])
-            if cfg.save_cfg.offset:
-                offset_preds.append(res["offset_preds"])
-            if cfg.save_cfg.nmc_clusters:
-                nmc_clusters.append(res["nmc_clusters"])
+                if cfg.save_cfg.offset_vertices:
+                    offset_vertices_preds.append(res["offset_vertices_preds"])
+                if cfg.save_cfg.semantic:
+                    sem_preds.append(res["semantic_preds"])
+                if cfg.save_cfg.offset:
+                    offset_preds.append(res["offset_preds"])
+                if cfg.save_cfg.nmc_clusters:
+                    nmc_clusters.append(res["nmc_clusters"])
 
-            if cfg.model.semantic_only:
-                point_eval.update(
-                    res["semantic_preds"],
-                    res["offset_preds"],
-                    res["semantic_labels"],
-                    res["offset_labels"],
-                    res["instance_labels"],
-                )
-            else:
-                pred_insts.append(res["pred_instances"])
-                gt_insts.append(res["gt_instances"])
 
                 # nmc_insts.append(res['nmc_instances'])
 
@@ -193,53 +174,53 @@ def main():
             #             class_name = CLASS_LABELS[cls_id - 2]
             #             box_gt[res['scan_id']].append((class_name, box))
 
-        # NOTE eval final inst mask+box
-        if cfg.model.semantic_only:
-            logger.info("Evaluate semantic segmentation and offset MAE")
-            ignore_label = cfg.model.ignore_label
-            miou, acc, mae = point_eval.get_eval(logger)
+    # NOTE eval final inst mask+box
+    if cfg.model.semantic_only:
+        logger.info("Evaluate semantic segmentation and offset MAE")
+        ignore_label = cfg.model.ignore_label
+        miou, acc, mae = point_eval.get_eval(logger)
 
-        else:
-            logger.info("Evaluate instance segmentation")
-            scannet_eval.evaluate(pred_insts, gt_insts)
+    else:
+        logger.info("Evaluate instance segmentation")
+        scannet_eval.evaluate(pred_insts, gt_insts)
 
-            # logger.info('Evaluate axis-align box prediction')
-            # scannet_eval.evaluate_box(pred_insts, gt_insts, coords)
+        # logger.info('Evaluate axis-align box prediction')
+        # scannet_eval.evaluate_box(pred_insts, gt_insts, coords)
 
-        # # NOTE eval proposal mask_box
-        # if not cfg.model.semantic_only:
-        #     logger.info('Evaluate instance segmentation nmc')
-        #     scannet_eval = ScanNetEval(dataset.CLASSES)
-        #     scannet_eval.evaluate(nmc_insts, gt_insts)
+    # # NOTE eval proposal mask_box
+    # if not cfg.model.semantic_only:
+    #     logger.info('Evaluate instance segmentation nmc')
+    #     scannet_eval = ScanNetEval(dataset.CLASSES)
+    #     scannet_eval.evaluate(nmc_insts, gt_insts)
 
-        #     logger.info('Evaluate axis-align box prediction nmc')
-        #     scannet_eval.evaluate_box(nmc_insts, gt_insts, coords)
+    #     logger.info('Evaluate axis-align box prediction nmc')
+    #     scannet_eval.evaluate_box(nmc_insts, gt_insts, coords)
 
-        # logger.info('Evaluate semantic segmentation and offset MAE')
-        # ignore_label = cfg.model.ignore_label
-        # miou, acc, mae = point_eval.get_eval(logger)
-        # evaluate_semantic_miou(sem_preds, sem_labels, ignore_label, logger)
-        # evaluate_semantic_acc(sem_preds, sem_labels, ignore_label, logger)
-        # evaluate_offset_mae(offset_preds, offset_labels, inst_labels, ignore_label, logger)
+    # logger.info('Evaluate semantic segmentation and offset MAE')
+    # ignore_label = cfg.model.ignore_label
+    # miou, acc, mae = point_eval.get_eval(logger)
+    # evaluate_semantic_miou(sem_preds, sem_labels, ignore_label, logger)
+    # evaluate_semantic_acc(sem_preds, sem_labels, ignore_label, logger)
+    # evaluate_offset_mae(offset_preds, offset_labels, inst_labels, ignore_label, logger)
 
-        # save output
-        if not args.out:
-            return
-        logger.info("Save results")
-        # save_npy(args.out, 'coords', scan_ids, coords)
-        if cfg.save_cfg.semantic:
-            save_npy(args.out, "semantic_pred", scan_ids, sem_preds)
-            # save_npy(args.out, 'semantic_label', scan_ids, sem_labels)
-        if cfg.save_cfg.offset:
-            save_npy(args.out, "offset_pred", scan_ids, offset_preds)
-            # save_npy(args.out, 'offset_label', scan_ids, offset_labels)
-        if cfg.save_cfg.offset_vertices:
-            save_npy(args.out, "offset_vertices_pred", scan_ids, offset_vertices_preds)
-        if cfg.save_cfg.instance:
-            save_pred_instances(args.out, "pred_instance", scan_ids, pred_insts)
-            # save_gt_instances(args.out, 'gt_instance', scan_ids, gt_insts)
-        if cfg.save_cfg.nmc_clusters:
-            save_npy(args.out, "nmc_clusters_ballquery", scan_ids, nmc_clusters)
+    # save output
+    if not args.out:
+        return
+    logger.info("Save results")
+    # save_npy(args.out, 'coords', scan_ids, coords)
+    if cfg.save_cfg.semantic:
+        save_npy(args.out, "semantic_pred", scan_ids, sem_preds)
+        # save_npy(args.out, 'semantic_label', scan_ids, sem_labels)
+    if cfg.save_cfg.offset:
+        save_npy(args.out, "offset_pred", scan_ids, offset_preds)
+        # save_npy(args.out, 'offset_label', scan_ids, offset_labels)
+    if cfg.save_cfg.offset_vertices:
+        save_npy(args.out, "offset_vertices_pred", scan_ids, offset_vertices_preds)
+    if cfg.save_cfg.instance:
+        save_pred_instances(args.out, "pred_instance", scan_ids, pred_insts)
+        # save_gt_instances(args.out, 'gt_instance', scan_ids, gt_insts)
+    if cfg.save_cfg.nmc_clusters:
+        save_npy(args.out, "nmc_clusters_ballquery", scan_ids, nmc_clusters)
 
 
 if __name__ == "__main__":
