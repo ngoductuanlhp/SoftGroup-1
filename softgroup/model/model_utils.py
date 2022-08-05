@@ -1,4 +1,5 @@
 import numpy as np
+from pyparsing import commonHTMLEntity
 import spconv.pytorch as spconv
 import torch
 import torch.distributed as dist
@@ -27,6 +28,13 @@ try:
     import torch_scatter
 except:
     print("cannot import torch_scatter")
+
+
+def inverse_sigmoid(x, eps=1e-3):
+    x = x.clamp(min=0, max=1)
+    x1 = x.clamp(min=eps)
+    x2 = (1 - x).clamp(min=eps)
+    return torch.log(x1/x2)
 
 
 def non_max_suppression_gpu(proposals_pred, scores, threshold):
@@ -259,6 +267,45 @@ def cal_giou(volumes, x1, y1, z1, x2, y2, z2, sort_indices, index):
 
     return IoU, gIoU
 
+def masking_by_box_iou(boxes_, queries_boxes):
+    # boxes_ n_points, 6
+    # queries_boxes n_queries, 6
+    n_points = boxes_.shape[0]
+    n_queries = queries_boxes.shape[0]
+
+    boxes_repeat = boxes_[None, :, :].repeat(n_queries, 1, 1).reshape(n_queries * n_points, -1) # n, 6
+    queries_boxes_repeat = queries_boxes[:, None, :].repeat(1, n_points, 1).reshape(n_queries * n_points, -1) # n, 6
+
+    coords_min_boxes = boxes_repeat[:, :3]
+    coords_max_boxes = boxes_repeat[:, 3:]
+
+    coords_min_queries_boxes = queries_boxes_repeat[:, :3]
+    coords_max_queries_boxes = queries_boxes_repeat[:, 3:]
+
+
+
+    upper = torch.min(coords_max_boxes, coords_max_queries_boxes)  # Nx3
+    lower = torch.max(coords_min_boxes, coords_min_queries_boxes)  # Nx3
+
+    intersection = torch.prod(torch.clamp((upper - lower), min=0.0), -1)  # N
+
+    boxes_volumes = torch.prod(torch.clamp((coords_max_boxes - coords_min_boxes), min=0.0), -1)
+    queries_boxes_volumes = torch.prod(torch.clamp((coords_max_queries_boxes - coords_min_queries_boxes), min=0.0), -1)
+
+    union = queries_boxes_volumes + boxes_volumes - intersection
+    iou = intersection / (union + 1e-6)
+
+    # upper_bound = torch.max(coords_max_boxes, coords_max_queries_boxes)
+    # lower_bound = torch.min(coords_min_boxes, coords_min_queries_boxes)
+
+    # volumes_bound = torch.prod(torch.clamp((upper_bound - lower_bound), min=0.0), -1)  # N
+
+    # giou = iou - (volumes_bound - union) / (volumes_bound + 1e-6)
+    
+    iou = inverse_sigmoid(iou)
+    iou = iou.reshape(n_queries, n_points)
+    
+    return iou
 
 @torch.no_grad()
 def non_maximum_cluster(
@@ -360,6 +407,8 @@ def non_maximum_cluster(
     return proposals_idx_final.int(), proposals_offset_final.int(), proposals_box_final, proposals_conf_final
     # breakpoint()
     # return proposals_idx_final.cpu().int(), proposals_offset_final.cpu().int(), proposals_box_final, proposals_conf_final
+
+
 
 
 @torch.no_grad()

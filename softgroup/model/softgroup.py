@@ -39,6 +39,7 @@ from .model_utils import (
     non_maximum_cluster2,
     sigmoid_focal_loss,
     superpoint_align,
+    masking_by_box_iou,
 )
 
 
@@ -301,15 +302,20 @@ class SoftGroup(nn.Module):
             "instance_labels": instance_labels,
             "instance_cls": instance_cls,
             "instance_box": instance_box,
+
+            "pt_offset_vertices_labels": pt_offset_vertices_labels,
             # "instance_batch_offsets": instance_batch_offsets,
         }
+
+        model_outputs["pt_offsets_vertices"] = pt_offsets_vertices
+
 
         if self.semantic_only:
             batch_inputs.update(
                     dict(
                         coords_float=coords_float,
                         pt_offset_labels=pt_offset_labels,
-                        pt_offset_vertices_labels=pt_offset_vertices_labels,
+                        # pt_offset_vertices_labels=pt_offset_vertices_labels,
                     )
                 )
             model_outputs.update(
@@ -678,11 +684,11 @@ class SoftGroup(nn.Module):
             output = self.output_layer(output)
             output_feats = output.features[input_map.long()]
 
-            semantic_scores = self.semantic_linear(output_feats)
-            pt_offsets = self.offset_linear(output_feats)
-            pt_offsets_vertices = self.offset_vertices_linear(output_feats)
-            box_conf = self.box_conf_linear(output_feats).squeeze(-1)
-            return semantic_scores, pt_offsets, pt_offsets_vertices, box_conf, output_feats
+        semantic_scores = self.semantic_linear(output_feats)
+        pt_offsets = self.offset_linear(output_feats)
+        pt_offsets_vertices = self.offset_vertices_linear(output_feats)
+        box_conf = self.box_conf_linear(output_feats).squeeze(-1)
+        return semantic_scores, pt_offsets, pt_offsets_vertices, box_conf, output_feats
 
 
     @force_fp32(apply_to=("locs_float_", "output_feats_"))
@@ -879,11 +885,11 @@ class SoftGroup(nn.Module):
 
             queries_box_preds = box_offsets_preds + queries_locs.repeat(1, 1, 2)
 
-            param_kernel2 = dec_output.transpose(0, 1).flatten(0, 1)  # (batch * n_queries) * channel
-            before_embedding_feature = self.before_embedding_tower(torch.unsqueeze(param_kernel2, dim=2))
-            controllers = self.controller(before_embedding_feature).squeeze(dim=2)
+            # param_kernel2 = dec_output.transpose(0, 1).flatten(0, 1)  # (batch * n_queries) * channel
+            # before_embedding_feature = self.before_embedding_tower(torch.unsqueeze(param_kernel2, dim=2))
+            # controllers = self.controller(before_embedding_feature).squeeze(dim=2)
 
-            controllers = controllers.reshape(batch, n_queries, -1)
+            # controllers = controllers.reshape(batch, n_queries, -1)
 
             mask_logits_list = []
             for b in range(batch):
@@ -893,8 +899,8 @@ class SoftGroup(nn.Module):
                     mask_logits_list.append(None)
                     continue
 
-                controller = controllers[b]  # n_queries x channel
-                weights, biases = self.parse_dynamic_params(controller, self.output_dim)
+                # controller = controllers[b]  # n_queries x channel
+                # weights, biases = self.parse_dynamic_params(controller, self.output_dim)
 
                 mask_feature_b = mask_features_[start:end]
                 locs_float_b = locs_float_[start:end]
@@ -902,11 +908,14 @@ class SoftGroup(nn.Module):
                 queries_locs_b = queries_locs[b]
                 queries_box_preds_b = queries_box_preds[b]
 
-                mask_logits = self.mask_heads_forward(
-                    mask_feature_b, weights, biases, n_queries, locs_float_b, box_preds_b, queries_locs_b, queries_box_preds_b
-                )
+                # mask_logits = self.mask_heads_forward(
+                #     mask_feature_b, weights, biases, n_queries, locs_float_b, box_preds_b, queries_locs_b, queries_box_preds_b
+                # )
 
-                mask_logits = mask_logits.squeeze(dim=0)  # (n_queries) x N_mask
+                # mask_logits = mask_logits.squeeze(dim=0)  # (n_queries) x N_mask
+
+                mask_logits = masking_by_box_iou(box_preds_b,queries_box_preds_b )
+
                 mask_logits_list.append(mask_logits)
 
             # output = {'cls_logits': cls_logits, 'mask_logits': mask_logits_list}

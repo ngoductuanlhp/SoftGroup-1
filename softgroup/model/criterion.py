@@ -368,6 +368,17 @@ class Criterion(nn.Module):
 
             loss_dict.update(point_wise_loss)
 
+        pt_offsets_vertices = model_outputs["pt_offsets_vertices"]
+        pt_offset_vertices_labels = batch_inputs["pt_offset_vertices_labels"]
+        pos_inds = instance_labels != self.ignore_label
+        total_pos_inds = pos_inds.sum()
+
+        offset_vertices_loss = (
+                F.l1_loss(pt_offsets_vertices[pos_inds], pt_offset_vertices_labels[pos_inds], reduction="sum")
+                / total_pos_inds
+            )
+        loss_dict['offset_vertices'] = offset_vertices_loss
+
         """ Main loss """
         mask_logits_layers = model_outputs["mask_logits_layers"]
         cls_logits_layers = model_outputs["cls_logits_layers"]
