@@ -34,7 +34,13 @@ class CustomDataset(Dataset):
         # self.filenames = self.filenames[:50]
 
     def get_filenames(self):
-        filenames = glob(osp.join(self.data_root, self.prefix, "*" + self.suffix))
+        if self.prefix == 'trainval':
+            filenames_train = glob(osp.join(self.data_root, 'train', '*' + self.suffix))
+            filenames_val = glob(osp.join(self.data_root, 'val', '*' + self.suffix))
+
+            filenames = filenames_train + filenames_val
+        else:
+            filenames = glob(osp.join(self.data_root, self.prefix, '*' + self.suffix))
         assert len(filenames) > 0, "Empty dataset."
         filenames = sorted(filenames * self.repeat)
         return filenames

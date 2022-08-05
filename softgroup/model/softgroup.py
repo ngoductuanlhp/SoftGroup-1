@@ -219,7 +219,7 @@ class SoftGroup(nn.Module):
         bias_nums = []
         for i in range(self.embedding_conv_num):
             if i == 0:
-                weight_nums.append((self.output_dim + 3 + 6) * self.output_dim)
+                weight_nums.append((self.output_dim + 3 + 3) * self.output_dim)
                 bias_nums.append(self.output_dim)
             elif i == self.embedding_conv_num - 1:
                 weight_nums.append(self.output_dim)
@@ -950,9 +950,10 @@ class SoftGroup(nn.Module):
         relative_coords = queries_coords.reshape(-1, 1, 3) - coords_.reshape(1, -1, 3)  ### N_inst * N_mask * 3
         relative_coords = relative_coords.permute(0, 2, 1)
 
-        # breakpoint()
         relative_boxes = queries_boxes.reshape(-1, 1, 6) - boxes_.reshape(1, -1, 6)  ### N_inst * N_mask * 3
         relative_boxes = relative_boxes.permute(0, 2, 1)
+
+        relative_boxes = relative_boxes[:, 3:, :] - relative_boxes[:, :3, :]
 
         x = torch.cat([relative_coords, relative_boxes, x], dim=1)  ### num_inst * (3+c) * N_mask
 
