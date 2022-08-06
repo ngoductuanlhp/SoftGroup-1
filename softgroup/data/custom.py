@@ -205,7 +205,13 @@ class CustomDataset(Dataset):
     def __getitem__(self, index):
         filename = self.filenames[index]
         scan_id = osp.basename(filename).replace(self.suffix, "")
-        xyz, rgb, semantic_label, instance_label = self.load(filename)
+        try:
+            xyz, rgb, semantic_label, instance_label = self.load(filename)
+        except:
+            # NOTE test
+            xyz, rgb = self.load(filename)
+            semantic_label = np.zeros(xyz.shape[0], dtype=np.long)
+            instance_label = np.zeros(xyz.shape[0], dtype=np.long)
 
         spp_filename = osp.join("dataset/scannetv2/superpoints", scan_id + ".pth")
         spp = self.load(spp_filename)

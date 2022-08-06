@@ -52,12 +52,12 @@ def save_npy(root, name, scan_ids, arrs):
     pool.join()
 
 
-def save_single_instance(root, scan_id, insts):
+def save_single_instance(root, scan_id, insts, benchmark_sem_id):
     f = open(osp.join(root, f"{scan_id}.txt"), "w")
     os.makedirs(osp.join(root, "predicted_masks"), exist_ok=True)
     for i, inst in enumerate(insts):
         assert scan_id == inst["scan_id"]
-        label_id = inst["label_id"]
+        label_id = benchmark_sem_id[inst["label_id"]]
         conf = inst["conf"]
         f.write(f"predicted_masks/{scan_id}_{i:03d}.txt {label_id} {conf:.4f}\n")
         mask_path = osp.join(root, "predicted_masks", f"{scan_id}_{i:03d}.txt")
@@ -66,12 +66,13 @@ def save_single_instance(root, scan_id, insts):
     f.close()
 
 
-def save_pred_instances(root, name, scan_ids, pred_insts):
+def save_pred_instances(root, name, scan_ids, pred_insts, benchmark_sem_id):
     root = osp.join(root, name)
     os.makedirs(root, exist_ok=True)
     roots = [root] * len(scan_ids)
+    benchmark_sem_ids = [benchmark_sem_id] * len(scan_ids)
     pool = mp.Pool()
-    pool.starmap(save_single_instance, zip(roots, scan_ids, pred_insts))
+    pool.starmap(save_single_instance, zip(roots, scan_ids, pred_insts, benchmark_sem_ids))
     pool.close()
     pool.join()
 
@@ -136,6 +137,7 @@ def main():
                 result = [result]
 
             for res in result:
+                scan_ids.append(res['scan_id'])
                 if cfg.model.semantic_only:
                     point_eval.update(res['semantic_preds'], res['offset_preds'], res['semantic_labels'], res['offset_labels'], res['instance_labels'])
                 else:
@@ -217,7 +219,8 @@ def main():
     if cfg.save_cfg.offset_vertices:
         save_npy(args.out, "offset_vertices_pred", scan_ids, offset_vertices_preds)
     if cfg.save_cfg.instance:
-        save_pred_instances(args.out, "pred_instance", scan_ids, pred_insts)
+        save_pred_instances(args.out, "pred_instance", scan_ids, pred_insts, dataset.BENCHMARK_SEMANTIC_IDXS)
+        # save_pred_instances(args.out, "pred_instance", scan_ids, pred_insts)
         # save_gt_instances(args.out, 'gt_instance', scan_ids, gt_insts)
     if cfg.save_cfg.nmc_clusters:
         save_npy(args.out, "nmc_clusters_ballquery", scan_ids, nmc_clusters)

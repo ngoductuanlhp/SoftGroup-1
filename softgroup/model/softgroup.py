@@ -950,10 +950,11 @@ class SoftGroup(nn.Module):
         relative_coords = queries_coords.reshape(-1, 1, 3) - coords_.reshape(1, -1, 3)  ### N_inst * N_mask * 3
         relative_coords = relative_coords.permute(0, 2, 1)
 
-        relative_boxes = queries_boxes.reshape(-1, 1, 6) - boxes_.reshape(1, -1, 6)  ### N_inst * N_mask * 3
-        relative_boxes = relative_boxes.permute(0, 2, 1)
+        queries_boxes_dim = queries_boxes[:, 3:] - queries_boxes[:, :3]
+        boxes_dim = boxes_[:, 3:] - boxes_[:, :3]
 
-        relative_boxes = relative_boxes[:, 3:, :] - relative_boxes[:, :3, :]
+        relative_boxes = torch.abs(queries_boxes_dim.reshape(-1, 1, 3) - boxes_dim.reshape(1, -1, 3))  ### N_inst * N_mask * 3
+        relative_boxes = relative_boxes.permute(0, 2, 1)
 
         x = torch.cat([relative_coords, relative_boxes, x], dim=1)  ### num_inst * (3+c) * N_mask
 
