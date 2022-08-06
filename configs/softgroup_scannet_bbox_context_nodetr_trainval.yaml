@@ -62,7 +62,7 @@ data:
   test:
     type: 'scannetv2'
     data_root: 'dataset/scannetv2'
-    prefix: 'val'
+    prefix: 'test'
     suffix: '_inst_nostuff.pth'
     training: False
     voxel_cfg:
@@ -87,7 +87,7 @@ optimizer:
 save_cfg:
   semantic: False
   offset: False
-  instance: False
+  instance: True
   offset_vertices: False
   nmc_clusters: False
 

@@ -23,6 +23,7 @@ class ScanNetDataset(CustomDataset):
         "bathtub",
         "otherfurniture",
     )
+    BENCHMARK_SEMANTIC_IDXS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 24, 28, 33, 34, 36, 39]
 
     def getInstanceInfo(self, xyz, instance_label, semantic_label):
         ret = super().getInstanceInfo(xyz, instance_label, semantic_label)
