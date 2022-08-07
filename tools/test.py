@@ -57,7 +57,12 @@ def save_single_instance(root, scan_id, insts, benchmark_sem_id):
     os.makedirs(osp.join(root, "predicted_masks"), exist_ok=True)
     for i, inst in enumerate(insts):
         assert scan_id == inst["scan_id"]
-        label_id = benchmark_sem_id[inst["label_id"]]
+
+        # NOTE process to map label id to benchmark
+        label_id = inst["label_id"] # 1-> 18
+        label_id = label_id + 1 # 2-> 19 , 0,1: background
+        label_id = benchmark_sem_id[label_id]
+
         conf = inst["conf"]
         f.write(f"predicted_masks/{scan_id}_{i:03d}.txt {label_id} {conf:.4f}\n")
         mask_path = osp.join(root, "predicted_masks", f"{scan_id}_{i:03d}.txt")
