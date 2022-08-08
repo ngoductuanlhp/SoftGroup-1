@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 import functools
 import torch_scatter
-from softgroup.pointnet2.pointnet2_modules import PointnetSAModuleVotes, PointnetSAModuleVotesSeparate
+from softgroup.pointnet2.pointnet2_modules import PointnetSAModuleVotes, PointnetSAModuleVotesCustom
 from softgroup.pointnet2.pointnet2_utils import furthest_point_sample
 from ..ops import (
     ballquery_batch_p,
@@ -29,7 +29,7 @@ from .detr.pos_embedding import PositionEmbeddingCoordsSine
 from .detr.transformer_layers import TransformerDecoder, TransformerDecoderLayer
 
 # from ..pointnet2 import pointnet2_utils
-from .geodesic_utils import cal_geodesic_vectorize, cal_geodesic_vectorize_batch
+from .geodesic_utils import cal_geodesic_vectorize, cal_geodesic_vectorize_batch, cal_geodesic_vectorize2
 from .model_utils import (
     compute_dice_loss,
     giou_aabb,
@@ -42,8 +42,8 @@ from .model_utils import (
 )
 
 
-# import faiss  # make faiss available
-# import faiss.contrib.torch_utils
+import faiss  # make faiss available
+import faiss.contrib.torch_utils
 
 
 
@@ -116,9 +116,9 @@ class SoftGroup(nn.Module):
 
         set_aggregate_dim_out = 2 * self.channels
         mlp_dims = [self.channels, 2 * self.channels, 2 * self.channels, set_aggregate_dim_out]
-        self.set_aggregator = PointnetSAModuleVotes(
+        self.set_aggregator = PointnetSAModuleVotesCustom(
             radius=0.4,
-            nsample=128,
+            nsample=transformer_cfg.n_sample_pa,
             npoint=transformer_cfg.n_context_points,
             mlp=mlp_dims,
             normalize_xyz=True,
@@ -184,12 +184,24 @@ class SoftGroup(nn.Module):
             self.freeze_backbone = False
         # self.freeze_backbone = False
 
-    # def init_knn(self):
-    #     faiss_cfg = faiss.GpuIndexFlatConfig()
-    #     faiss_cfg.useFloat16 = True
-    #     faiss_cfg.device = 0
+    def init_knn(self):
+        # faiss_cfg = faiss.GpuIndexFlatConfig()
+        # faiss_cfg.useFloat16 = True
+        # faiss_cfg.device = 0
 
-    #     self.geo_knn = faiss.GpuIndexFlatL2(faiss.StandardGpuResources(), 3, faiss_cfg)
+        # self.geo_knn = faiss.GpuIndexFlatL2(faiss.StandardGpuResources(), 3, faiss_cfg)
+
+        if torch.distributed.is_initialized():
+            rank = torch.distributed.get_rank()
+        else:
+            rank = 0
+        faiss_cfg = faiss.GpuIndexFlatConfig()
+        faiss_cfg.useFloat16 = True
+        faiss_cfg.device = rank
+
+        # self.knn_res = faiss.StandardGpuResources()
+        # self.geo_knn = faiss.index_cpu_to_gpu(self.knn_res, 0, faiss.IndexFlatL2(3))
+        self.geo_knn = faiss.GpuIndexFlatL2(faiss.StandardGpuResources(), 3, faiss_cfg)
 
     def init_dyco(self):
         ################################
@@ -354,7 +366,7 @@ class SoftGroup(nn.Module):
                 batch_size,
                 pre_enc_inds=None,
             )
-            context_locs, context_boxes, context_centroid, context_feats, pre_enc_inds = contexts
+            context_locs, context_feats, pre_enc_inds = contexts
 
             if self.transformer_cfg.two_stage:
                 with torch.no_grad():
@@ -377,15 +389,15 @@ class SoftGroup(nn.Module):
                     self.transformer_cfg.n_queries, dtype=torch.long, device=context_locs.device
                 )[None, :].repeat(batch_size, 1)
 
-            query_locs = torch.gather(
-                context_locs, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_locs.shape[-1])
-            )
-            query_boxes = torch.gather(
-                context_boxes, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_boxes.shape[-1])
-            )
-            query_centroid = torch.gather(
-                context_centroid, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_centroid.shape[-1])
-            )
+            # query_locs = torch.gather(
+            #     context_locs, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_locs.shape[-1])
+            # )
+            # query_boxes = torch.gather(
+            #     context_boxes, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_boxes.shape[-1])
+            # )
+            # query_centroid = torch.gather(
+            #     context_centroid, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_centroid.shape[-1])
+            # )
 
             # NOTE process geodist
             # geo_dists = cal_geodesic_vectorize(
@@ -402,9 +414,13 @@ class SoftGroup(nn.Module):
 
             # NOTE transformer decoder
             # dec_outputs = self.forward_decoder(context_locs, context_boxes, context_centroid, context_feats, query_locs, query_boxes, query_centroid, pc_dims, geo_dists, pre_enc_inds)
-            query_feats = torch.gather(
-                context_feats, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_feats.shape[-1])
-            )
+            # query_feats = torch.gather(
+            #     context_feats, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_feats.shape[-1])
+            # )
+
+            query_locs = context_locs
+            query_feats = context_feats
+
             query_feats = self.encoder_to_decoder_projection(query_feats.permute(0, 2, 1))  # batch x channel x npoints
             dec_outputs = query_feats[None, ...].permute(0, 3, 1, 2)  # num_layers x n_queries x batch x channel
 
@@ -562,39 +578,29 @@ class SoftGroup(nn.Module):
                 batch_size,
                 pre_enc_inds=None,
             )
-            context_locs, context_boxes, context_centroid, context_feats, pre_enc_inds = contexts
+            context_locs, context_feats, pre_enc_inds = contexts
 
-            if self.transformer_cfg.two_stage:
-                with torch.no_grad():
-                    context_feats_two_stage = self.encoder_to_decoder_projection(
-                        context_feats.permute(0, 2, 1)
-                    )  # batch x channel x npoints
+            # if self.transformer_cfg.two_stage:
+            #     with torch.no_grad():
+            #         context_feats_two_stage = self.encoder_to_decoder_projection(
+            #             context_feats.permute(0, 2, 1)
+            #         )  # batch x channel x npoints
 
-                    cls_logits_two_stage = self.detr_sem_head(context_feats_two_stage).transpose(
-                        1, 2
-                    )  # batch x n_contexts x n_classes
-                    cls_logits_two_stage = F.softmax(cls_logits_two_stage, dim=-1)
+            #         cls_logits_two_stage = self.detr_sem_head(context_feats_two_stage).transpose(
+            #             1, 2
+            #         )  # batch x n_contexts x n_classes
+            #         cls_logits_two_stage = F.softmax(cls_logits_two_stage, dim=-1)
 
-                    cls_logits_two_stage_max = torch.max(cls_logits_two_stage, dim=-1)[0]  # batch x n_contexts
-                    topk_queries_inds = torch.topk(cls_logits_two_stage_max, k=self.transformer_cfg.n_queries, dim=-1)[
-                        1
-                    ]  # batch x n_queries
+            #         cls_logits_two_stage_max = torch.max(cls_logits_two_stage, dim=-1)[0]  # batch x n_contexts
+            #         topk_queries_inds = torch.topk(cls_logits_two_stage_max, k=self.transformer_cfg.n_queries, dim=-1)[
+            #             1
+            #         ]  # batch x n_queries
 
-                    # topk_queries_inds = topk_queries_inds.detach()
-            else:  # get first m_queries
-                topk_queries_inds = torch.arange(
-                    self.transformer_cfg.n_queries, dtype=torch.long, device=context_locs.device
-                )[None, :].repeat(batch_size, 1)
-
-            query_locs = torch.gather(
-                context_locs, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_locs.shape[-1])
-            )
-            query_boxes = torch.gather(
-                context_boxes, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_boxes.shape[-1])
-            )
-            query_centroid = torch.gather(
-                context_centroid, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_centroid.shape[-1])
-            )
+            #         # topk_queries_inds = topk_queries_inds.detach()
+            # else:  # get first m_queries
+            #     topk_queries_inds = torch.arange(
+            #         self.transformer_cfg.n_queries, dtype=torch.long, device=context_locs.device
+            #     )[None, :].repeat(batch_size, 1)
 
             # NOTE process geodist
             # geo_dists = cal_geodesic_vectorize(
@@ -612,15 +618,16 @@ class SoftGroup(nn.Module):
             # NOTE transformer decoder
             # dec_outputs = self.forward_decoder(context_locs, context_boxes, context_centroid, context_feats, query_locs, query_boxes, query_centroid, pc_dims, geo_dists, pre_enc_inds)
 
-            query_feats = torch.gather(
-                context_feats, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_feats.shape[-1])
-            )
+            # query_feats = torch.gather(
+            #     context_feats, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_feats.shape[-1])
+            # )
+
+            query_locs = context_locs
+            query_feats = context_feats
+
             query_feats = self.encoder_to_decoder_projection(query_feats.permute(0, 2, 1))  # batch x channel x npoints
             dec_outputs = query_feats[None, ...].permute(0, 3, 1, 2)  # num_layers x n_queries x batch x channel
 
-            # FIXME only for test
-            # query_locs = query_locs[:, :64, :]
-            # dec_outputs = dec_outputs[:, :64, :, :]
 
             cls_logits_layers, mask_logits_layers, conf_logits_layers, box_preds_layers = self.forward_head(
                 dec_outputs, 
@@ -690,8 +697,8 @@ class SoftGroup(nn.Module):
         self, locs_float_, output_feats_, pt_offsets_, pt_offsets_vertices_, batch_offsets_, batch_size, pre_enc_inds
     ):
         context_locs = []
-        context_boxes = []
-        context_centroid = []
+        # context_boxes = []
+        # context_centroid = []
         context_feats = []
         # grouped_features = []
         # grouped_xyz = []
@@ -700,58 +707,46 @@ class SoftGroup(nn.Module):
         for b in range(batch_size):
             start = batch_offsets_[b]
             end = batch_offsets_[b + 1]
-            locs_float_b = locs_float_[start:end, :].unsqueeze(0)
-            output_feats_b = output_feats_[start:end, :].unsqueeze(0)
+            locs_float_b = locs_float_[start:end, :].unsqueeze(0).contiguous() # (1, n_points, 3)
+            output_feats_b = output_feats_[start:end, :].unsqueeze(0).transpose(1, 2).contiguous() # ( 1, C, n_points)
             batch_points = (end - start).item()
 
             if batch_points == 0:
                 return None
 
-            context_locs_b, context_feats_b, context_inds_b = self.set_aggregator(
-                locs_float_b.contiguous(), output_feats_b.transpose(1, 2).contiguous()
+            farthest_inds = furthest_point_sample(locs_float_b, self.transformer_cfg.n_queries).int()
+
+            # NOTE process geodist
+            grouping_dists, grouping_inds = cal_geodesic_vectorize2(
+                self.geo_knn,
+                farthest_inds[0],
+                locs_float_b[0],
+                max_step=self.transformer_cfg.geo_step,
+                neighbor=self.transformer_cfg.geo_neighbor,
+                radius=self.transformer_cfg.geo_radius,
+                n_queries=self.transformer_cfg.n_queries,
+                n_sample=self.transformer_cfg.n_sample_pa,
             )
 
-            # context_locs_b, context_feats_b, context_inds_b = self.set_aggregator2(context_locs_b,
-            #                                                                     context_feats_b)
+            grouping_dists = grouping_dists.unsqueeze(0).float()
+            grouping_inds = grouping_inds.unsqueeze(0).int()
+
+            context_locs_b, context_feats_b, context_inds_b = self.set_aggregator(
+                locs_float_b, output_feats_b, inds=farthest_inds, grouping_inds=grouping_inds, grouping_dists=grouping_dists
+            )
+
 
             context_feats_b = context_feats_b.transpose(1, 2)
 
-            # if torch.any(torch.isnan(context_locs_b)):
-            #     breakpoint()
-
-            # if torch.any(torch.isnan(context_feats_b)):
-            #     breakpoint()
-
-            # context_locs_b, grouped_features_b, grouped_xyz_b, pre_enc_inds_b = self.set_aggregator.group_points(locs_float_b.contiguous(),
-            #                                                         output_feats_b.transpose(1,2).contiguous())
-
-            # context_boxes_b = pt_offsets_vertices_[start:end, :][pre_enc_inds_b[0].long(), :].unsqueeze(0) + context_locs_b.repeat(1,1,2)
-            temp = pt_offsets_vertices_[start:end, :][context_inds_b[0].long(), :].unsqueeze(0)  # 1, N, 6
-            context_boxes_b = temp[:, :, 3:] - temp[:, :, :3]
-
-            context_centroid_b = pt_offsets_[start:end, :][context_inds_b[0].long(), :].unsqueeze(0) + context_locs_b
-
             context_locs.append(context_locs_b)
-            context_boxes.append(context_boxes_b)
-            context_centroid.append(context_centroid_b)
 
             context_feats.append(context_feats_b)
-            # grouped_features.append(grouped_features_b)
-            # grouped_xyz.append(grouped_xyz_b)
             pre_enc_inds.append(context_inds_b)
 
         context_locs = torch.cat(context_locs)
-        context_boxes = torch.cat(context_boxes)
-        context_centroid = torch.cat(context_centroid)
         context_feats = torch.cat(context_feats)
-        # grouped_features = torch.cat(grouped_features)
-        # grouped_xyz = torch.cat(grouped_xyz)
         pre_enc_inds = torch.cat(pre_enc_inds)
-
-        # context_feats = self.set_aggregator.mlp(grouped_features, grouped_xyz)
-        # context_feats = context_feats.transpose(1,2)
-
-        return context_locs, context_boxes, context_centroid, context_feats, pre_enc_inds
+        return context_locs, context_feats, pre_enc_inds
 
     def forward_decoder(
         self,

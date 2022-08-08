@@ -234,6 +234,11 @@ def main():
             model, device_ids=[torch.cuda.current_device()], find_unused_parameters=(trainable_params < total_params)
         )
 
+    if args.dist:
+        model.module.init_knn()
+    else:
+        model.init_knn()
+
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.fp16)
 
     # data

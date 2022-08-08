@@ -372,6 +372,71 @@ class QueryAndGroup(nn.Module):
             return tuple(ret)
 
 
+class QueryAndGroupCustom(nn.Module):
+    r"""
+    Groups with a ball query of radius
+
+    Parameters
+    ---------
+    radius : float32
+        Radius of ball
+    nsample : int32
+        Maximum number of features to gather in the ball
+    """
+
+    def __init__(
+        self,
+        radius,
+        nsample,
+        use_xyz=True,
+        normalize_xyz=False,
+    ):
+        # type: (QueryAndGroup, float, int, bool) -> None
+        super(QueryAndGroup, self).__init__()
+        self.radius, self.nsample, self.use_xyz = radius, nsample, use_xyz
+        self.normalize_xyz = normalize_xyz
+
+    def forward(self, xyz, new_xyz, idx, features=None):
+        # type: (QueryAndGroup, torch.Tensor. torch.Tensor, torch.Tensor) -> Tuple[Torch.Tensor]
+        r"""
+        Parameters
+        ----------
+        xyz : torch.Tensor
+            xyz coordinates of the features (B, N, 3)
+        new_xyz : torch.Tensor
+            centriods (B, npoint, 3)
+        idx: torch.Tensor
+            grouping idx (B, npoints, nsamples)
+        features : torch.Tensor
+            Descriptors of the features (B, C, N)
+
+        Returns
+        -------
+        new_features : torch.Tensor
+            (B, 3 + C, npoint, nsample) tensor
+        """
+        # idx = ball_query(self.radius, self.nsample, xyz, new_xyz)
+
+        xyz_trans = xyz.transpose(1, 2).contiguous()
+        grouped_xyz = grouping_operation(xyz_trans, idx)  # (B, 3, npoint, nsample)
+        grouped_xyz -= new_xyz.transpose(1, 2).unsqueeze(-1)
+        if self.normalize_xyz:
+            grouped_xyz /= self.radius
+
+        if features is not None:
+            grouped_features = grouping_operation(features, idx)
+            if self.use_xyz:
+                new_features = torch.cat([grouped_xyz, grouped_features], dim=1)  # (B, C + 3, npoint, nsample)
+            else:
+                new_features = grouped_features
+        else:
+            assert self.use_xyz, "Cannot have not features and not use xyz as a feature!"
+            new_features = grouped_xyz
+
+
+        return (new_features, grouped_xyz)
+
+
 class GroupAll(nn.Module):
     r"""
     Groups all features

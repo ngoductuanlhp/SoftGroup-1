@@ -8,13 +8,17 @@ model:
   ignore_label: -100
   transformer_cfg:
     two_stage: False
-    n_context_points: 4096
+    n_context_points: 192
     n_queries: 192
     dec_dim: 64
     dec_ffn_dim: 256
     dec_nhead: 8
     dec_nlayers: 6
     n_subsample: 30000
+    n_sample_pa: 256
+    geo_neighbor: 64
+    geo_radius: 0.05
+    geo_step: 8
 
   grouping_cfg:
     sem_inst_cls_thresh: 0.3
@@ -98,4 +102,5 @@ save_freq: 4
 pretrain: 'pretrains/best_pretrain.pth'
 work_dir: ''
 
+# pretrain weight: pretrains/best_pretrain.pth
 # best weight: pretrains/best_baseline.pth
