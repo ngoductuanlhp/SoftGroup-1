@@ -277,7 +277,8 @@ def main():
     global best_metric
     best_metric = 0
 
-    validate(0, model, optimizer, val_loader, cfg, logger, writer)
+    # if is_main_process():
+    #     validate(0, model, optimizer, val_loader, cfg, logger, writer)
 
     for epoch in range(start_epoch, cfg.epochs + 1):
         train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer)

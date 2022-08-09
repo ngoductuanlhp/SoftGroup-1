@@ -22,6 +22,7 @@ from ..ops import (
     voxelization,
     voxelization_idx,
 )
+from softgroup.ops.functions import knnquery
 from ..util import cuda_cast, force_fp32, rle_encode
 from .blocks import MLP, PositionalEmbedding, ResidualBlock, UBlock, conv_with_kaiming_uniform
 from .detr.helper import GenericMLP
@@ -35,10 +36,12 @@ from .model_utils import (
     giou_aabb,
     iou_aabb,
     non_max_suppression_gpu,
+    non_max_suppression_gpu_perclass,
     non_maximum_cluster,
     non_maximum_cluster2,
     sigmoid_focal_loss,
     superpoint_align,
+
 )
 
 
@@ -118,11 +121,11 @@ class SoftGroup(nn.Module):
         mlp_dims = [self.channels, 2 * self.channels, 2 * self.channels, set_aggregate_dim_out]
         self.set_aggregator = PointnetSAModuleVotesCustom(
             radius=transformer_cfg.geo_radius * transformer_cfg.geo_step,
-            # radius=0.8
             nsample=transformer_cfg.n_sample_pa,
             npoint=transformer_cfg.n_context_points,
             mlp=mlp_dims,
             normalize_xyz=True,
+            use_layernorm=True,
         )
 
         """ Position embedding """
@@ -712,6 +715,7 @@ class SoftGroup(nn.Module):
             output_feats_b = output_feats_[start:end, :].unsqueeze(0).transpose(1, 2).contiguous() # ( 1, C, n_points)
             batch_points = (end - start).item()
 
+
             if batch_points == 0:
                 return None
 
@@ -719,8 +723,7 @@ class SoftGroup(nn.Module):
 
             # t_start = time.time()
             # NOTE process geodist
-            grouping_dists, grouping_inds = cal_geodesic_vectorize2(
-                self.geo_knn,
+            grouping_dists, grouping_inds = cal_geodesic_vectorize4(
                 farthest_inds[0],
                 locs_float_b[0],
                 max_step=self.transformer_cfg.geo_step,
@@ -1061,7 +1064,8 @@ class SoftGroup(nn.Module):
             scores_final = scores[final_cond]
 
             # NOTE NMS
-            pick_idxs = non_max_suppression_gpu(masks_final, scores_final, threshold=0.2)  # int, (nCluster, N)
+            pick_idxs = non_max_suppression_gpu_perclass(masks_final, scores_final, cls_final, threshold=0.2) 
+            # pick_idxs = non_max_suppression_gpu(masks_final, scores_final, threshold=0.2)  # int, (nCluster, N)
             masks_final = masks_final[pick_idxs]
             scores_final = scores_final[pick_idxs]
             cls_final = cls_final[pick_idxs]

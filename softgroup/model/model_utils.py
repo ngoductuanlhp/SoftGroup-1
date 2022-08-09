@@ -29,6 +29,38 @@ except:
     print("cannot import torch_scatter")
 
 
+
+def non_max_suppression_gpu_perclass(proposals_pred, scores, classes, threshold):
+    proposals_pred = proposals_pred.float()  # (nProposal, N), float, cuda
+    intersection = torch.mm(proposals_pred, proposals_pred.t())  # (nProposal, nProposal), float, cuda
+    proposals_pointnum = proposals_pred.sum(1)  # (nProposal), float, cuda
+    proposals_pn_h = proposals_pointnum.unsqueeze(-1).repeat(1, proposals_pointnum.shape[0])
+    proposals_pn_v = proposals_pointnum.unsqueeze(0).repeat(proposals_pointnum.shape[0], 1)
+    ious = intersection / (proposals_pn_h + proposals_pn_v - intersection)
+
+    ixs = torch.argsort(scores, descending=True)
+
+    pick = []
+    while len(ixs) > 0:
+        i = ixs[0]
+        pick.append(i)
+        
+        pivot_cls = classes[i]
+
+        iou = ious[i, ixs[1:]]
+        other_cls = classes[ixs[1:]]
+
+        condition = (iou > threshold) & (other_cls == pivot_cls)
+        # condition = (iou > threshold) 
+        remove_ixs = torch.nonzero(condition).view(-1) + 1
+
+        remove_ixs = torch.cat([remove_ixs, torch.tensor([0], device=remove_ixs.device)]).long()
+
+        mask = torch.ones_like(ixs, device=ixs.device, dtype=torch.bool)
+        mask[remove_ixs] = False
+        ixs = ixs[mask]
+    return torch.tensor(pick, dtype=torch.long, device=scores.device)
+
 def non_max_suppression_gpu(proposals_pred, scores, threshold):
     proposals_pred = proposals_pred.float()  # (nProposal, N), float, cuda
     intersection = torch.mm(proposals_pred, proposals_pred.t())  # (nProposal, nProposal), float, cuda

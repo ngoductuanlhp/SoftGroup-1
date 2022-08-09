@@ -319,6 +319,7 @@ def cal_geodesic_vectorize2(
         points_distances = distances_new_cumsum[temp_inds, neighbors_inds]  # n_temp2
         queries_inds = queries_inds[temp_inds, neighbors_inds]  # n_temp2
 
+    del distances_arr, indices_arr
 
     geo_dist[visited==0] = max_dist # N_queries, n_points
 
@@ -444,7 +445,7 @@ def cal_geodesic_vectorize3(
 # NOTE fastest way to cal geodesic distance
 @torch.no_grad()
 def cal_geodesic_vectorize4(
-    gpu_index, query_inds, locs_float_b, max_step=16, neighbor=64, radius=0.05, n_queries=192, max_dist=10000, n_sample=256
+    query_inds, locs_float_b, max_step=16, neighbor=64, radius=0.05, n_queries=192, max_dist=10000, n_sample=256
 ):
 
     # batch_size = pre_enc_inds.shape[0]
@@ -523,6 +524,7 @@ def cal_geodesic_vectorize4(
         points_distances = distances_new_cumsum[temp_inds, neighbors_inds]  # n_temp2
         queries_inds = queries_inds[temp_inds, neighbors_inds]  # n_temp2
 
+    del distances_arr, indices_arr
 
     geo_dist[visited==0] = max_dist # N_queries, n_points
 

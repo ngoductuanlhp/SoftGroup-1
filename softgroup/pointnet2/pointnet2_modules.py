@@ -380,6 +380,7 @@ class PointnetSAModuleVotesCustom(nn.Module):
         pooling: str = "max",
         sigma: float = None,  # for RBF pooling
         normalize_xyz: bool = False,  # noramlize local XYZ with radius
+        use_layernorm: bool = False,
         # sample_uniformly: bool = False,
         # ret_unique_cnt: bool = False
     ):
@@ -405,8 +406,25 @@ class PointnetSAModuleVotesCustom(nn.Module):
 
         mlp_spec = mlp
         if use_xyz and len(mlp_spec) > 0:
-            mlp_spec[0] += (3 + 1)
-        self.mlp_module = pt_utils.SharedMLP(mlp_spec, bn=bn)
+            mlp_spec[0] += (3)
+
+        self.mlp_spec = mlp_spec
+
+        self.use_layernorm = use_layernorm
+        
+        if use_layernorm:
+            mlp_module = []
+            for i in range(len(mlp_spec)-1):
+                mlp_module.append(nn.Sequential(
+                    nn.LayerNorm(mlp_spec[i]),
+                    nn.Linear(mlp_spec[i], mlp_spec[i+1], bias=False if i == len(mlp_spec)-2 else True)
+                ))
+                # self.mlp_module[f'norm_{i}'] = nn.LayerNorm(mlp_spec[i]),
+                # self.mlp_module[f'linear_{i}'] = nn.Linear(mlp_spec[i], mlp_spec[i+1], bias=False),
+
+            self.mlp_module = nn.ModuleList(mlp_module)
+        else:
+            self.mlp_module = pt_utils.SharedMLP(mlp_spec, bn=bn)
 
     def forward(
         self, xyz: torch.Tensor, features: torch.Tensor = None, inds: torch.Tensor = None, grouping_inds: torch.Tensor = None, grouping_dists: torch.Tensor = None
@@ -449,26 +467,26 @@ class PointnetSAModuleVotesCustom(nn.Module):
         grouped_xyz -= new_xyz.transpose(1, 2).unsqueeze(-1)
         grouped_xyz /= self.radius
 
-        grouping_dists_new = grouping_dists[:, None, :, :] / self.radius
+        # grouping_dists_new = grouping_dists[:, None, :, :] / self.radius
         grouped_features = pointnet2_utils.grouping_operation(features, grouping_inds)
-        grouped_features = torch.cat([grouped_xyz, grouping_dists_new, grouped_features], dim=1)  # (B, C + 3 + 1, npoint, nsample)
+        # grouped_features = torch.cat([grouped_xyz, grouping_dists_new, grouped_features], dim=1)  # (B, C + 3 + 1, npoint, nsample)
+        grouped_features = torch.cat([grouped_xyz, grouped_features], dim=1)  # (B, C + 3 + 1, npoint, nsample)
 
+        if self.use_layernorm:
+            batch_size, channels, npoints, nsamples = grouped_features.shape
+            feat = grouped_features.permute(0,2,3,1).view(batch_size * npoints * nsamples, -1) # b, npoints, nsample, c
+            
+            for l, layer in enumerate(self.mlp_module):
+                feat = F.relu(layer(feat))
 
-        new_features = self.mlp_module(grouped_features)  # (B, mlp[-1], npoint, nsample)
-        if self.pooling == "max":
+            feat = feat.view(batch_size, npoints, nsamples, -1).permute(0,1,3,2).view(-1, nsamples)
+            new_features = F.max_pool1d(feat, kernel_size=nsamples).view(batch_size, npoints,-1)
+
+            new_features = new_features.permute(0,2,1) # B, C, npoints
+        else:
+            new_features = self.mlp_module(grouped_features)  # (B, mlp[-1], npoint, nsample)
             new_features = F.max_pool2d(new_features, kernel_size=[1, new_features.size(3)])  # (B, mlp[-1], npoint, 1)
-        elif self.pooling == "avg":
-            new_features = F.avg_pool2d(new_features, kernel_size=[1, new_features.size(3)])  # (B, mlp[-1], npoint, 1)
-        elif self.pooling == "rbf":
-            # Use radial basis function kernel for weighted sum of features (normalized by nsample and sigma)
-            # Ref: https://en.wikipedia.org/wiki/Radial_basis_function_kernel
-            rbf = torch.exp(
-                -1 * grouped_xyz.pow(2).sum(1, keepdim=False) / (self.sigma**2) / 2
-            )  # (B, npoint, nsample)
-            new_features = torch.sum(new_features * rbf.unsqueeze(1), -1, keepdim=True) / float(
-                self.nsample
-            )  # (B, mlp[-1], npoint, 1)
-        new_features = new_features.squeeze(-1)  # (B, mlp[-1], npoint)
+            new_features = new_features.squeeze(-1) 
 
         return new_xyz, new_features, inds
 

@@ -15,10 +15,10 @@ model:
     dec_nhead: 8
     dec_nlayers: 6
     n_subsample: 30000
-    n_sample_pa: 512
-    geo_neighbor: 64
-    geo_radius: 0.05
-    geo_step: 16
+    n_sample_pa: 128
+    geo_neighbor: 32
+    geo_radius: 0.03
+    geo_step: 8
 
   grouping_cfg:
     sem_inst_cls_thresh: 0.3
@@ -99,7 +99,7 @@ fp16: True
 epochs: 40
 step_epoch: 18
 save_freq: 4
-pretrain: 'work_dirs/baseline/geopa_sample256/best.pth'
+pretrain: 'pretrains/best_baseline.pth'
 work_dir: ''
 
 # pretrain weight: pretrains/best_pretrain.pth
