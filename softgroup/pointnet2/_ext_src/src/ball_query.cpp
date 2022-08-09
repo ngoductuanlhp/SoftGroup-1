@@ -33,3 +33,31 @@ at::Tensor ball_query(at::Tensor new_xyz, at::Tensor xyz, const float radius,
 
   return idx;
 }
+
+void query_ball_point_kernel_wrapper_dist(int b, int n, int m, float radius,
+                                     int nsample, const float *new_xyz,
+                                     const float *xyz, int *idx, float *dist);
+
+void ball_query_dist(at::Tensor new_xyz, at::Tensor xyz, const float radius,
+                      const int nsample, at::Tensor inds, at::Tensor dists) {
+  CHECK_CONTIGUOUS(new_xyz);
+  CHECK_CONTIGUOUS(xyz);
+  CHECK_IS_FLOAT(new_xyz);
+  CHECK_IS_FLOAT(xyz);
+
+  if (new_xyz.is_cuda()) {
+    CHECK_CUDA(xyz);
+  }
+
+  // at::Tensor idx =
+  //     torch::zeros({new_xyz.size(0), new_xyz.size(1), nsample},
+  //                  at::device(new_xyz.device()).dtype(at::ScalarType::Int));
+
+  if (new_xyz.is_cuda()) {
+    query_ball_point_kernel_wrapper_dist(xyz.size(0), xyz.size(1), new_xyz.size(1),
+                                    radius, nsample, new_xyz.data<float>(),
+                                    xyz.data<float>(), inds.data<int>(), dists.data<float>());
+  } else {
+    AT_ASSERT(false, "CPU not supported");
+  }
+}

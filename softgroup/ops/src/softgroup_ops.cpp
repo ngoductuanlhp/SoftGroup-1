@@ -8,6 +8,7 @@
 #include "roipool/roipool.cpp"
 #include "sec_mean/sec_mean.cpp"
 #include "voxelize/voxelize.cpp"
+#include "knnquery/knnquery_cuda.cpp"
 
 void voxelize_idx_3d(/* long N*4 */ at::Tensor coords,
                      /* long M*4 */ at::Tensor output_coords,

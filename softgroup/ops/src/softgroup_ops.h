@@ -5,6 +5,7 @@
 #include "datatype/datatype.h"
 #include "roipool/roipool.h"
 #include "sec_mean/sec_mean.h"
+#include "knnquery/knnquery_cuda_kernel.h"
 
 void voxelize_idx_3d(/* long N*4 */ at::Tensor coords,
                      /* long M*4 */ at::Tensor output_coords,

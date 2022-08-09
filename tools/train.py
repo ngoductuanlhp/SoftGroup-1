@@ -6,7 +6,7 @@ import os
 import os.path as osp
 import shutil
 import time
-
+import gc
 
 np.random.seed(0)
 
@@ -131,12 +131,14 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
     with torch.no_grad():
         model.eval()
         for i, batch in enumerate(val_loader):
+            if i % 10 == 0:
+                torch.cuda.empty_cache()
+                logger.info(f"Infer scene {i+1}/{len(val_set)}")
+
             with torch.cuda.amp.autocast(enabled=cfg.fp16):
                 result = model(batch)
 
-            if i % 10 == 0:
-                logger.info(f"Infer scene {i+1}/{len(val_set)}")
-
+            
             if not isinstance(result, list):
                 result = [result]
 
@@ -146,6 +148,10 @@ def validate(epoch, model, optimizer, val_loader, cfg, logger, writer):
                 else:
                     all_pred_insts.append(res['pred_instances'])
                     all_gt_insts.append(res['gt_instances'])
+            
+            # del result
+            # gc.collect()
+            # torch.cuda.empty_cache()
 
 
 
@@ -271,7 +277,7 @@ def main():
     global best_metric
     best_metric = 0
 
-    # validate(0, model, optimizer, val_loader, cfg, logger, writer)
+    validate(0, model, optimizer, val_loader, cfg, logger, writer)
 
     for epoch in range(start_epoch, cfg.epochs + 1):
         train(epoch, model, optimizer, scaler, train_loader, cfg, logger, writer)

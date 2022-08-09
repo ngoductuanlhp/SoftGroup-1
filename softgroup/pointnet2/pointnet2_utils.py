@@ -283,6 +283,46 @@ class BallQuery(Function):
 ball_query = BallQuery.apply
 
 
+class BallQueryDist(Function):
+    @staticmethod
+    def forward(ctx, radius, nsample, xyz, new_xyz):
+        # type: (Any, float, int, torch.Tensor, torch.Tensor) -> torch.Tensor
+        r"""
+
+        Parameters
+        ----------
+        radius : float
+            radius of the balls
+        nsample : int
+            maximum number of features in the balls
+        xyz : torch.Tensor
+            (B, N, 3) xyz coordinates of the features
+        new_xyz : torch.Tensor
+            (B, npoint, 3) centers of the ball query
+
+        Returns
+        -------
+        torch.Tensor
+            (B, npoint, nsample) tensor with the indicies of the features that form the query balls
+        """
+        batch_size, npoint = new_xyz.shape[:2]
+
+        inds = torch.cuda.IntTensor(batch_size, npoint, nsample).zero_() - 1
+        dists = torch.cuda.FloatTensor(batch_size, npoint, nsample).zero_() - 1
+
+        _ext.ball_query_dist(new_xyz, xyz, radius, nsample, inds, dists)
+        ctx.mark_non_differentiable(inds)
+        ctx.mark_non_differentiable(dists)
+        return inds, dists
+
+    @staticmethod
+    def backward(ctx, a=None):
+        return None, None, None, None
+
+
+ball_query_dist = BallQueryDist.apply
+
+
 class QueryAndGroup(nn.Module):
     r"""
     Groups with a ball query of radius

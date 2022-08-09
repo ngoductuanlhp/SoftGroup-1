@@ -24,4 +24,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("sec_mean", &sec_mean, "sec_mean");
   m.def("sec_min", &sec_min, "sec_min");
   m.def("sec_max", &sec_max, "sec_max");
+
+  m.def("knnquery_cuda", &knnquery_cuda, "knnquery_cuda");
 }

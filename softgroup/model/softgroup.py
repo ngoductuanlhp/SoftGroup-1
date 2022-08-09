@@ -29,7 +29,7 @@ from .detr.pos_embedding import PositionEmbeddingCoordsSine
 from .detr.transformer_layers import TransformerDecoder, TransformerDecoderLayer
 
 # from ..pointnet2 import pointnet2_utils
-from .geodesic_utils import cal_geodesic_vectorize, cal_geodesic_vectorize_batch, cal_geodesic_vectorize2
+from .geodesic_utils import cal_geodesic_vectorize, cal_geodesic_vectorize_batch, cal_geodesic_vectorize2, cal_geodesic_vectorize3, cal_geodesic_vectorize4
 from .model_utils import (
     compute_dice_loss,
     giou_aabb,
@@ -44,7 +44,7 @@ from .model_utils import (
 
 import faiss  # make faiss available
 import faiss.contrib.torch_utils
-
+import time
 
 
 
@@ -117,7 +117,8 @@ class SoftGroup(nn.Module):
         set_aggregate_dim_out = 2 * self.channels
         mlp_dims = [self.channels, 2 * self.channels, 2 * self.channels, set_aggregate_dim_out]
         self.set_aggregator = PointnetSAModuleVotesCustom(
-            radius=0.4,
+            radius=transformer_cfg.geo_radius * transformer_cfg.geo_step,
+            # radius=0.8
             nsample=transformer_cfg.n_sample_pa,
             npoint=transformer_cfg.n_context_points,
             mlp=mlp_dims,
@@ -185,23 +186,23 @@ class SoftGroup(nn.Module):
         # self.freeze_backbone = False
 
     def init_knn(self):
-        # faiss_cfg = faiss.GpuIndexFlatConfig()
-        # faiss_cfg.useFloat16 = True
-        # faiss_cfg.device = 0
-
-        # self.geo_knn = faiss.GpuIndexFlatL2(faiss.StandardGpuResources(), 3, faiss_cfg)
-
-        if torch.distributed.is_initialized():
-            rank = torch.distributed.get_rank()
-        else:
-            rank = 0
         faiss_cfg = faiss.GpuIndexFlatConfig()
         faiss_cfg.useFloat16 = True
-        faiss_cfg.device = rank
+        faiss_cfg.device = 0
 
-        # self.knn_res = faiss.StandardGpuResources()
-        # self.geo_knn = faiss.index_cpu_to_gpu(self.knn_res, 0, faiss.IndexFlatL2(3))
         self.geo_knn = faiss.GpuIndexFlatL2(faiss.StandardGpuResources(), 3, faiss_cfg)
+
+        # if torch.distributed.is_initialized():
+        #     rank = torch.distributed.get_rank()
+        # else:
+        #     rank = 0
+        # faiss_cfg = faiss.GpuIndexFlatConfig()
+        # faiss_cfg.useFloat16 = True
+        # faiss_cfg.device = rank
+
+        # # self.knn_res = faiss.StandardGpuResources()
+        # # self.geo_knn = faiss.index_cpu_to_gpu(self.knn_res, 0, faiss.IndexFlatL2(3))
+        # self.geo_knn = faiss.GpuIndexFlatL2(faiss.StandardGpuResources(), 3, faiss_cfg)
 
     def init_dyco(self):
         ################################
@@ -716,6 +717,7 @@ class SoftGroup(nn.Module):
 
             farthest_inds = furthest_point_sample(locs_float_b, self.transformer_cfg.n_queries).int()
 
+            # t_start = time.time()
             # NOTE process geodist
             grouping_dists, grouping_inds = cal_geodesic_vectorize2(
                 self.geo_knn,
@@ -727,6 +729,9 @@ class SoftGroup(nn.Module):
                 n_queries=self.transformer_cfg.n_queries,
                 n_sample=self.transformer_cfg.n_sample_pa,
             )
+
+            # t_end = time.time()
+            # print('geo time', t_end - t_start)
 
             grouping_dists = grouping_dists.unsqueeze(0).float()
             grouping_inds = grouping_inds.unsqueeze(0).int()

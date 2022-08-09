@@ -16,6 +16,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("three_interpolate_grad", &three_interpolate_grad);
 
   m.def("ball_query", &ball_query);
+  m.def("ball_query_dist", &ball_query_dist);
 
   m.def("group_points", &group_points);
   m.def("group_points_grad", &group_points_grad);

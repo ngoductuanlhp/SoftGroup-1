@@ -447,9 +447,9 @@ class PointnetSAModuleVotesCustom(nn.Module):
         # xyz_trans = xyz.transpose(1, 2).contiguous()
         grouped_xyz = pointnet2_utils.grouping_operation(xyz_flipped, grouping_inds)  # (B, 3, npoint, nsample)
         grouped_xyz -= new_xyz.transpose(1, 2).unsqueeze(-1)
-        # grouped_xyz /= self.radius
+        grouped_xyz /= self.radius
 
-        grouping_dists_new = grouping_dists[:, None, :, :]
+        grouping_dists_new = grouping_dists[:, None, :, :] / self.radius
         grouped_features = pointnet2_utils.grouping_operation(features, grouping_inds)
         grouped_features = torch.cat([grouped_xyz, grouping_dists_new, grouped_features], dim=1)  # (B, C + 3 + 1, npoint, nsample)
 

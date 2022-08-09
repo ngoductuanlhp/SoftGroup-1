@@ -5,3 +5,6 @@
 
 at::Tensor ball_query(at::Tensor new_xyz, at::Tensor xyz, const float radius,
                       const int nsample);
+
+void ball_query_dist(at::Tensor new_xyz, at::Tensor xyz, const float radius,
+                      const int nsample, at::Tensor inds, at::Tensor dists);

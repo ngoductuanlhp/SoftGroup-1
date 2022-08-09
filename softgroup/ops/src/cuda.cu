@@ -6,6 +6,7 @@
 #include "roipool/roipool.cu"
 #include "sec_mean/sec_mean.cu"
 #include "voxelize/voxelize.cu"
+#include "knnquery/knnquery_cuda_kernel.cu"
 
 template void voxelize_fp_cuda<float>(Int nOutputRows, Int maxActive,
                                       Int nPlanes, float *feats,
