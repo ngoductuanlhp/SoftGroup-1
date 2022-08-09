@@ -6,6 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import functools
+import time
+
 from unittest.mock import NonCallableMagicMock
 from ..ops import (
     ballquery_batch_p,
@@ -28,6 +30,127 @@ try:
 except:
     print("cannot import torch_scatter")
 
+
+def nms_and_merge(proposals_pred, scores, classes, threshold):
+    proposals_pred = proposals_pred.float()  # (nProposal, N), float, cuda
+    intersection = torch.mm(proposals_pred, proposals_pred.t())  # (nProposal, nProposal), float, cuda
+    proposals_pointnum = proposals_pred.sum(1)  # (nProposal), float, cuda
+    proposals_pn_h = proposals_pointnum.unsqueeze(-1).repeat(1, proposals_pointnum.shape[0])
+    proposals_pn_v = proposals_pointnum.unsqueeze(0).repeat(proposals_pointnum.shape[0], 1)
+    ious = intersection / (proposals_pn_h + proposals_pn_v - intersection)
+
+    ixs = torch.argsort(scores, descending=True)
+
+    pick = []
+    proposals = []
+    while len(ixs) > 0:
+        i = ixs[0]
+        pick.append(i)
+        
+        pivot_cls = classes[i]
+
+        iou = ious[i, ixs[1:]]
+        other_cls = classes[ixs[1:]]
+
+        condition = (iou > threshold) & (other_cls == pivot_cls)
+        remove_ixs = torch.nonzero(condition).view(-1) + 1
+
+        remove_ixs = torch.cat([remove_ixs, torch.tensor([0], device=remove_ixs.device)]).long()
+
+        idx_to_merge = ixs[remove_ixs]
+        proposals_to_merge = proposals_pred[idx_to_merge, :]
+        n_proposals_to_merge = len(remove_ixs)
+        proposal_merged = (torch.sum(proposals_to_merge, dim=0) >= n_proposals_to_merge * 0.5)
+
+        proposals.append(proposal_merged)
+
+        mask = torch.ones_like(ixs, device=ixs.device, dtype=torch.bool)
+        mask[remove_ixs] = False
+        ixs = ixs[mask]
+
+    pick = torch.tensor(pick, dtype=torch.long, device=scores.device)
+    proposals = torch.stack(proposals, dim=0).bool()
+    return pick, proposals
+
+# NOTE NMS by box , faster than mask but decrease a little bit accuracy (mAP)
+def nms_box_perclass(proposals_pred, scores, classes, boxes, threshold):
+    # t1 = time.time()
+    # proposals_pred = proposals_pred.float()  # (nProposal, N), float, cuda
+    # intersection = torch.mm(proposals_pred, proposals_pred.t())  # (nProposal, nProposal), float, cuda
+    # proposals_pointnum = proposals_pred.sum(1)  # (nProposal), float, cuda
+    # proposals_pn_h = proposals_pointnum.unsqueeze(-1).repeat(1, proposals_pointnum.shape[0])
+    # proposals_pn_v = proposals_pointnum.unsqueeze(0).repeat(proposals_pointnum.shape[0], 1)
+    # ious_mask = intersection / (proposals_pn_h + proposals_pn_v - intersection)
+
+    # t2 = time.time()
+    nproposals = boxes.shape[0]
+    boxes1 = (
+        boxes[:, None, :].repeat(1, nproposals, 1).reshape(nproposals * nproposals, -1)
+    )  # n_queries * n_inst, 6
+    boxes2 = (
+        boxes[None, :, :].repeat(nproposals, 1, 1).reshape(nproposals * nproposals, -1)
+    )  # n_queries * n_inst, 6
+    # box_preds_b = box_preds_b.reshape(n_queries*n_inst_gt, -1)
+    # instance_box_b = instance_box_b.reshape(n_queries*n_inst_gt, -1)
+    ious_box = iou_aabb(box_preds=boxes1, box_gt=boxes2).reshape(nproposals, nproposals)
+
+    # t3 = time.time()
+
+    # print(f'debug mask iou {t2-t1}, box iou {t3-t2}')
+    ixs = torch.argsort(scores, descending=True)
+
+    pick = []
+    while len(ixs) > 0:
+        i = ixs[0]
+        pick.append(i)
+        
+        pivot_cls = classes[i]
+
+        # iou_mask = ious_mask[i, ixs[1:]]
+        iou_box = ious_box[i, ixs[1:]]
+        other_cls = classes[ixs[1:]]
+
+        condition = (iou_box > threshold) & (other_cls == pivot_cls)
+        # condition = (iou > threshold) 
+        remove_ixs = torch.nonzero(condition).view(-1) + 1
+
+        remove_ixs = torch.cat([remove_ixs, torch.tensor([0], device=remove_ixs.device)]).long()
+
+        mask = torch.ones_like(ixs, device=ixs.device, dtype=torch.bool)
+        mask[remove_ixs] = False
+        ixs = ixs[mask]
+    return torch.tensor(pick, dtype=torch.long, device=scores.device)
+
+def non_max_suppression_gpu_perclass(proposals_pred, scores, classes, threshold):
+    proposals_pred = proposals_pred.float()  # (nProposal, N), float, cuda
+    intersection = torch.mm(proposals_pred, proposals_pred.t())  # (nProposal, nProposal), float, cuda
+    proposals_pointnum = proposals_pred.sum(1)  # (nProposal), float, cuda
+    proposals_pn_h = proposals_pointnum.unsqueeze(-1).repeat(1, proposals_pointnum.shape[0])
+    proposals_pn_v = proposals_pointnum.unsqueeze(0).repeat(proposals_pointnum.shape[0], 1)
+    ious = intersection / (proposals_pn_h + proposals_pn_v - intersection)
+
+    ixs = torch.argsort(scores, descending=True)
+
+    pick = []
+    while len(ixs) > 0:
+        i = ixs[0]
+        pick.append(i)
+        
+        pivot_cls = classes[i]
+
+        iou = ious[i, ixs[1:]]
+        other_cls = classes[ixs[1:]]
+
+        condition = (iou > threshold) & (other_cls == pivot_cls)
+        # condition = (iou > threshold) 
+        remove_ixs = torch.nonzero(condition).view(-1) + 1
+
+        remove_ixs = torch.cat([remove_ixs, torch.tensor([0], device=remove_ixs.device)]).long()
+
+        mask = torch.ones_like(ixs, device=ixs.device, dtype=torch.bool)
+        mask[remove_ixs] = False
+        ixs = ixs[mask]
+    return torch.tensor(pick, dtype=torch.long, device=scores.device)
 
 def non_max_suppression_gpu(proposals_pred, scores, threshold):
     proposals_pred = proposals_pred.float()  # (nProposal, N), float, cuda
@@ -133,12 +256,19 @@ def compute_sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, 
 
 
 @torch.no_grad()
-def iou_aabb(pt_offsets_vertices, pt_offset_vertices_labels, coords):
-    coords_min_pred = coords + pt_offsets_vertices[:, 0:3]  # N x 3
-    coords_max_pred = coords + pt_offsets_vertices[:, 3:6]  # N x 3
+def iou_aabb(pt_offsets_vertices=None, pt_offset_vertices_labels=None, coords=None, box_preds=None, box_gt=None):
+    if coords is not None:
+        coords_min_pred = coords + pt_offsets_vertices[:, 0:3]  # N x 3
+        coords_max_pred = coords + pt_offsets_vertices[:, 3:6]  # N x 3
 
-    coords_min_gt = coords + pt_offset_vertices_labels[:, 0:3]  # N x 3
-    coords_max_gt = coords + pt_offset_vertices_labels[:, 3:6]  # N x 3
+        coords_min_gt = coords + pt_offset_vertices_labels[:, 0:3]  # N x 3
+        coords_max_gt = coords + pt_offset_vertices_labels[:, 3:6]  # N x 3
+    else:
+        coords_min_pred = box_preds[:, 0:3]  # n_queries x 3
+        coords_max_pred = box_preds[:, 3:6]  # n_queries x 3
+
+        coords_min_gt = box_gt[:, 0:3]  # n_inst x 3
+        coords_max_gt = box_gt[:, 3:6]  # n_inst x 3
 
     upper = torch.min(coords_max_pred, coords_max_gt)  # Nx3
     lower = torch.max(coords_min_pred, coords_min_gt)  # Nx3

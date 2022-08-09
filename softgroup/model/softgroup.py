@@ -35,10 +35,13 @@ from .model_utils import (
     giou_aabb,
     iou_aabb,
     non_max_suppression_gpu,
+    non_max_suppression_gpu_perclass,
+    nms_and_merge,
     non_maximum_cluster,
     non_maximum_cluster2,
     sigmoid_focal_loss,
     superpoint_align,
+    nms_box_perclass,
 )
 
 
@@ -636,6 +639,7 @@ class SoftGroup(nn.Module):
                 mask_logits_layers[-1],
                 cls_logits_layers[-1],
                 conf_logits_layers[-1],
+                box_preds_layers[-1],
                 object_idxs,
                 batch_offsets,
                 batch_offsets_,
@@ -972,6 +976,7 @@ class SoftGroup(nn.Module):
         mask_logits,
         cls_logits,
         conf_logits,
+        box_preds,
         object_idxs,
         batch_offsets,
         batch_offsets_,
@@ -1002,6 +1007,8 @@ class SoftGroup(nn.Module):
             cls_logits_pred_b = torch.argmax(cls_logits[b], dim=-1)  # n_mask
 
             conf_logits_b = torch.clamp(conf_logits[b], 0.0, 1.0)
+
+            box_preds_b = box_preds[b]
 
             n_queries = mask_logit_b.shape[0]
 
@@ -1059,9 +1066,14 @@ class SoftGroup(nn.Module):
             cls_final = cls_logits_pred_b[final_cond]
             masks_final = mask_logit_b_bool[final_cond]
             scores_final = scores[final_cond]
+            boxes_final = box_preds_b[final_cond]
 
             # NOTE NMS
-            pick_idxs = non_max_suppression_gpu(masks_final, scores_final, threshold=0.2)  # int, (nCluster, N)
+            # pick_idxs = non_max_suppression_gpu(masks_final, scores_final, threshold=0.2)  # int, (nCluster, N)
+
+            # pick_idxs = nms_box_perclass(masks_final, scores_final, cls_final, boxes_final, threshold=0.3)
+            pick_idxs = non_max_suppression_gpu_perclass(masks_final, scores_final, cls_final, threshold=0.2)  # int, (nCluster, N)
+            # pick_idxs, masks_final = nms_and_merge(masks_final, scores_final, cls_final, threshold=0.2)
             masks_final = masks_final[pick_idxs]
             scores_final = scores_final[pick_idxs]
             cls_final = cls_final[pick_idxs]
