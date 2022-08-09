@@ -909,18 +909,36 @@ class SoftGroup(nn.Module):
                 mask_logits = self.mask_heads_forward(
                     mask_feature_b, weights, biases, n_queries, locs_float_b, box_preds_b, queries_locs_b, queries_box_preds_b
                 )
-
-                mask_logits = mask_logits.squeeze(dim=0)  # (n_queries) x N_mask
                 mask_logits_list.append(mask_logits)
 
-            # output = {'cls_logits': cls_logits, 'mask_logits': mask_logits_list}
-            # outputs.append(output)
             cls_logits_layers.append(cls_logits)
             mask_logits_layers.append(mask_logits_list)
             conf_logits_layers.append(conf_logits)
             box_preds_layers.append(queries_box_preds)
 
         return cls_logits_layers, mask_logits_layers, conf_logits_layers, box_preds_layers
+
+    # def parse_dynamic_params(self, params, out_channels):
+    #     assert params.dim() == 2
+    #     assert len(self.weight_nums) == len(self.bias_nums)
+    #     assert params.size(1) == sum(self.weight_nums) + sum(self.bias_nums)
+
+    #     num_instances = params.size(0)
+    #     num_layers = len(self.weight_nums)
+    #     params_splits = list(torch.split_with_sizes(params, self.weight_nums + self.bias_nums, dim=1))
+
+    #     weight_splits = params_splits[:num_layers]
+    #     bias_splits = params_splits[num_layers:]
+
+    #     for l in range(num_layers):
+    #         if l < num_layers - 1:
+    #             weight_splits[l] = weight_splits[l].reshape(num_instances * out_channels, -1, 1)
+    #             bias_splits[l] = bias_splits[l].reshape(num_instances * out_channels)
+    #         else:
+    #             weight_splits[l] = weight_splits[l].reshape(num_instances, -1, 1)
+    #             bias_splits[l] = bias_splits[l].reshape(num_instances)
+
+    #     return weight_splits, bias_splits
 
     def parse_dynamic_params(self, params, out_channels):
         assert params.dim() == 2
@@ -936,19 +954,44 @@ class SoftGroup(nn.Module):
 
         for l in range(num_layers):
             if l < num_layers - 1:
-                weight_splits[l] = weight_splits[l].reshape(num_instances * out_channels, -1, 1)
-                bias_splits[l] = bias_splits[l].reshape(num_instances * out_channels)
+                weight_splits[l] = weight_splits[l].reshape(num_instances, out_channels, -1).permute(0,2,1)
+                bias_splits[l] = bias_splits[l].reshape(num_instances, out_channels)
             else:
-                weight_splits[l] = weight_splits[l].reshape(num_instances, -1, 1)
-                bias_splits[l] = bias_splits[l].reshape(num_instances)
+                weight_splits[l] = weight_splits[l].reshape(num_instances, out_channels, 1)
+                bias_splits[l] = bias_splits[l].reshape(num_instances, 1)
 
-        return weight_splits, bias_splits
+        return weight_splits, bias_splits # LIST OF [n_queries, C_in, C_out]
+
+    # def mask_heads_forward(self, mask_features, weights, biases, num_insts, coords_, boxes_, queries_coords, queries_boxes):
+    #     assert mask_features.dim() == 3
+    #     n_layers = len(weights)
+    #     c = mask_features.size(1)
+    #     n_mask = mask_features.size(0)
+    #     x = mask_features.permute(2, 1, 0).repeat(num_insts, 1, 1)  ### num_inst * c * N_mask
+
+    #     relative_coords = queries_coords.reshape(-1, 1, 3) - coords_.reshape(1, -1, 3)  ### N_inst * N_mask * 3
+    #     relative_coords = relative_coords.permute(0, 2, 1)
+
+    #     queries_boxes_dim = queries_boxes[:, 3:] - queries_boxes[:, :3]
+    #     boxes_dim = boxes_[:, 3:] - boxes_[:, :3]
+
+    #     relative_boxes = torch.abs(queries_boxes_dim.reshape(-1, 1, 3) - boxes_dim.reshape(1, -1, 3))  ### N_inst * N_mask * 3
+    #     relative_boxes = relative_boxes.permute(0, 2, 1)
+
+    #     x = torch.cat([relative_coords, relative_boxes, x], dim=1)  ### num_inst * (3+c) * N_mask
+
+    #     x = x.reshape(1, -1, n_mask)  ### 1 * (num_inst*c') * Nmask
+    #     for i, (w, b) in enumerate(zip(weights, biases)):
+    #         x = F.conv1d(x, w, bias=b, stride=1, padding=0, groups=num_insts)
+    #         if i < n_layers - 1:
+    #             x = F.relu(x)
+
+    #     x = x.squeeze(0)
+    #     return x
 
     def mask_heads_forward(self, mask_features, weights, biases, num_insts, coords_, boxes_, queries_coords, queries_boxes):
         assert mask_features.dim() == 3
         n_layers = len(weights)
-        c = mask_features.size(1)
-        n_mask = mask_features.size(0)
         x = mask_features.permute(2, 1, 0).repeat(num_insts, 1, 1)  ### num_inst * c * N_mask
 
         relative_coords = queries_coords.reshape(-1, 1, 3) - coords_.reshape(1, -1, 3)  ### N_inst * N_mask * 3
@@ -962,12 +1005,12 @@ class SoftGroup(nn.Module):
 
         x = torch.cat([relative_coords, relative_boxes, x], dim=1)  ### num_inst * (3+c) * N_mask
 
-        x = x.reshape(1, -1, n_mask)  ### 1 * (num_inst*c') * Nmask
         for i, (w, b) in enumerate(zip(weights, biases)):
-            x = F.conv1d(x, w, bias=b, stride=1, padding=0, groups=num_insts)
+            x = torch.einsum("qab,qan->qbn", w, x) + b.unsqueeze(-1)
             if i < n_layers - 1:
                 x = F.relu(x)
 
+        x = x.squeeze(1)
         return x
 
     def get_instance(
