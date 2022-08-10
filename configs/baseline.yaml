@@ -18,7 +18,7 @@ model:
     n_sample_pa: 128
     geo_neighbor: 32
     geo_radius: 0.03
-    geo_step: 8
+    geo_step: 32
 
   grouping_cfg:
     sem_inst_cls_thresh: 0.3
@@ -99,7 +99,7 @@ fp16: True
 epochs: 40
 step_epoch: 18
 save_freq: 4
-pretrain: 'pretrains/best_baseline.pth'
+pretrain: 'work_dirs/baseline/geopa_sample128_neighbor32_r0.03_step8_scaledxyz/best.pth'
 work_dir: ''
 
 # pretrain weight: pretrains/best_pretrain.pth

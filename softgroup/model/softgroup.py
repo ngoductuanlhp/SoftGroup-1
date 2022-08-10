@@ -125,7 +125,7 @@ class SoftGroup(nn.Module):
             npoint=transformer_cfg.n_context_points,
             mlp=mlp_dims,
             normalize_xyz=True,
-            use_layernorm=True,
+            use_layernorm=False,
         )
 
         """ Position embedding """
@@ -235,7 +235,7 @@ class SoftGroup(nn.Module):
         bias_nums = []
         for i in range(self.embedding_conv_num):
             if i == 0:
-                weight_nums.append((self.output_dim + 3 + 3) * self.output_dim)
+                weight_nums.append((self.output_dim + 3 + 3 + 1) * self.output_dim)
                 bias_nums.append(self.output_dim)
             elif i == self.embedding_conv_num - 1:
                 weight_nums.append(self.output_dim)
@@ -342,18 +342,14 @@ class SoftGroup(nn.Module):
 
             mask_features = self.mask_tower(torch.unsqueeze(output_feats, dim=2).permute(2, 1, 0)).permute(2, 1, 0)
 
-            # semantic_scores_inst_cls = F.softmax(semantic_scores[:, self.label_shift:], dim=-1)
-
             semantic_scores_pred = torch.argmax(semantic_scores, dim=1)  # N_points
 
             object_conditions = semantic_scores_pred >= 2
-            # object_conditions = torch.any((semantic_scores_inst_cls >= self.grouping_cfg.sem_inst_cls_thresh), dim=-1)
             object_idxs = torch.nonzero(object_conditions).view(-1)
 
             batch_idxs_ = batch_idxs[object_idxs]
             coords_float_ = coords_float[object_idxs]
             output_feats_ = output_feats[object_idxs]
-            # semantic_scores_ = semantic_scores[object_idxs]
             mask_features_ = mask_features[object_idxs]
             pt_offsets_ = pt_offsets[object_idxs]
             pt_offsets_vertices_ = pt_offsets_vertices[object_idxs]
@@ -370,66 +366,14 @@ class SoftGroup(nn.Module):
                 batch_size,
                 pre_enc_inds=None,
             )
-            context_locs, context_feats, pre_enc_inds = contexts
-
-            if self.transformer_cfg.two_stage:
-                with torch.no_grad():
-                    context_feats_two_stage = self.encoder_to_decoder_projection(
-                        context_feats.permute(0, 2, 1)
-                    )  # batch x channel x npoints
-
-                    cls_logits_two_stage = self.detr_sem_head(context_feats_two_stage).transpose(
-                        1, 2
-                    )  # batch x n_contexts x n_classes
-                    cls_logits_two_stage = F.softmax(cls_logits_two_stage[..., :-1], dim=-1)
-
-                    cls_logits_two_stage_max = torch.max(cls_logits_two_stage, dim=-1)[0]  # batch x n_contexts
-                    topk_queries_inds = torch.topk(cls_logits_two_stage_max, k=self.transformer_cfg.n_queries, dim=-1)[
-                        1
-                    ]  # batch x n_queries
-
-            else:  # get first m_queries
-                topk_queries_inds = torch.arange(
-                    self.transformer_cfg.n_queries, dtype=torch.long, device=context_locs.device
-                )[None, :].repeat(batch_size, 1)
-
-            # query_locs = torch.gather(
-            #     context_locs, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_locs.shape[-1])
-            # )
-            # query_boxes = torch.gather(
-            #     context_boxes, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_boxes.shape[-1])
-            # )
-            # query_centroid = torch.gather(
-            #     context_centroid, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_centroid.shape[-1])
-            # )
-
-            # NOTE process geodist
-            # geo_dists = cal_geodesic_vectorize(
-            #     self.geo_knn,
-            #     pre_enc_inds,
-            #     coords_float_,
-            #     batch_offsets_,
-            #     max_step=128 if self.training else 256,
-            #     neighbor=64,
-            #     radius=0.05,
-            #     n_queries=self.transformer_cfg.n_queries,
-            # )
-            geo_dists = None
-
-            # NOTE transformer decoder
-            # dec_outputs = self.forward_decoder(context_locs, context_boxes, context_centroid, context_feats, query_locs, query_boxes, query_centroid, pc_dims, geo_dists, pre_enc_inds)
-            # query_feats = torch.gather(
-            #     context_feats, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_feats.shape[-1])
-            # )
-
-            query_locs = context_locs
-            query_feats = context_feats
+            query_locs, query_feats, query_inds, geo_dists, geo_valids = contexts
 
             query_feats = self.encoder_to_decoder_projection(query_feats.permute(0, 2, 1))  # batch x channel x npoints
             dec_outputs = query_feats[None, ...].permute(0, 3, 1, 2)  # num_layers x n_queries x batch x channel
 
             # NOTE subsample for dynamic conv
             object_idxs_subsample = []
+            geo_dists_subsample, geo_valids_subsample = [], []
             for b in range(batch_size):
                 start, end = batch_offsets_[b], batch_offsets_[b + 1]
                 num_points_b = (end - start).cpu()
@@ -441,11 +385,13 @@ class SoftGroup(nn.Module):
                             dtype=torch.long,
                             device=coords_float.device,
                         )
-                        + start
                     )
                 else:
-                    new_inds = torch.arange(num_points_b, dtype=torch.long, device=coords_float.device) + start
-                object_idxs_subsample.append(new_inds)
+                    new_inds = torch.arange(num_points_b, dtype=torch.long, device=coords_float.device)
+
+                geo_dists_subsample.append(geo_dists[b][:, new_inds])
+                geo_valids_subsample.append(geo_valids[b][:, new_inds])
+                object_idxs_subsample.append(new_inds + start)
             object_idxs_subsample = torch.cat(object_idxs_subsample)  # N_subsample: batch x 20000
 
             mask_features_subsample = mask_features_[object_idxs_subsample]
@@ -461,6 +407,7 @@ class SoftGroup(nn.Module):
                 box_preds_subsample,
                 query_locs, 
                 batch_offsets_subsample,
+                geo_dists_subsample, geo_valids_subsample
             )
 
             model_outputs.update(
@@ -582,52 +529,7 @@ class SoftGroup(nn.Module):
                 batch_size,
                 pre_enc_inds=None,
             )
-            context_locs, context_feats, pre_enc_inds = contexts
-
-            # if self.transformer_cfg.two_stage:
-            #     with torch.no_grad():
-            #         context_feats_two_stage = self.encoder_to_decoder_projection(
-            #             context_feats.permute(0, 2, 1)
-            #         )  # batch x channel x npoints
-
-            #         cls_logits_two_stage = self.detr_sem_head(context_feats_two_stage).transpose(
-            #             1, 2
-            #         )  # batch x n_contexts x n_classes
-            #         cls_logits_two_stage = F.softmax(cls_logits_two_stage, dim=-1)
-
-            #         cls_logits_two_stage_max = torch.max(cls_logits_two_stage, dim=-1)[0]  # batch x n_contexts
-            #         topk_queries_inds = torch.topk(cls_logits_two_stage_max, k=self.transformer_cfg.n_queries, dim=-1)[
-            #             1
-            #         ]  # batch x n_queries
-
-            #         # topk_queries_inds = topk_queries_inds.detach()
-            # else:  # get first m_queries
-            #     topk_queries_inds = torch.arange(
-            #         self.transformer_cfg.n_queries, dtype=torch.long, device=context_locs.device
-            #     )[None, :].repeat(batch_size, 1)
-
-            # NOTE process geodist
-            # geo_dists = cal_geodesic_vectorize(
-            #     self.geo_knn,
-            #     pre_enc_inds,
-            #     coords_float_,
-            #     batch_offsets_,
-            #     max_step=128 if self.training else 256,
-            #     neighbor=64,
-            #     radius=0.05,
-            #     n_queries=self.transformer_cfg.n_queries,
-            # )
-            geo_dists = None
-
-            # NOTE transformer decoder
-            # dec_outputs = self.forward_decoder(context_locs, context_boxes, context_centroid, context_feats, query_locs, query_boxes, query_centroid, pc_dims, geo_dists, pre_enc_inds)
-
-            # query_feats = torch.gather(
-            #     context_feats, dim=1, index=topk_queries_inds.unsqueeze(-1).repeat(1, 1, context_feats.shape[-1])
-            # )
-
-            query_locs = context_locs
-            query_feats = context_feats
+            query_locs, query_feats, query_inds, geo_dists, geo_valids = contexts
 
             query_feats = self.encoder_to_decoder_projection(query_feats.permute(0, 2, 1))  # batch x channel x npoints
             dec_outputs = query_feats[None, ...].permute(0, 3, 1, 2)  # num_layers x n_queries x batch x channel
@@ -639,7 +541,8 @@ class SoftGroup(nn.Module):
                 coords_float_,
                 box_preds_, 
                 query_locs, 
-                batch_offsets_
+                batch_offsets_,
+                geo_dists, geo_valids
             )
 
             pred_instances_arr = self.get_instance(
@@ -701,12 +604,11 @@ class SoftGroup(nn.Module):
         self, locs_float_, output_feats_, pt_offsets_, pt_offsets_vertices_, batch_offsets_, batch_size, pre_enc_inds
     ):
         context_locs = []
-        # context_boxes = []
-        # context_centroid = []
         context_feats = []
-        # grouped_features = []
-        # grouped_xyz = []
         pre_enc_inds = []
+
+        geo_dists = []
+        geo_valids = []
 
         for b in range(batch_size):
             start = batch_offsets_[b]
@@ -723,7 +625,7 @@ class SoftGroup(nn.Module):
 
             # t_start = time.time()
             # NOTE process geodist
-            grouping_dists, grouping_inds = cal_geodesic_vectorize4(
+            grouping_dists, grouping_inds, geo_dist, geo_valid = cal_geodesic_vectorize4(
                 farthest_inds[0],
                 locs_float_b[0],
                 max_step=self.transformer_cfg.geo_step,
@@ -747,14 +649,18 @@ class SoftGroup(nn.Module):
             context_feats_b = context_feats_b.transpose(1, 2)
 
             context_locs.append(context_locs_b)
-
             context_feats.append(context_feats_b)
             pre_enc_inds.append(context_inds_b)
+
+            geo_dists.append(geo_dist)
+            geo_valids.append(geo_valid)
 
         context_locs = torch.cat(context_locs)
         context_feats = torch.cat(context_feats)
         pre_enc_inds = torch.cat(pre_enc_inds)
-        return context_locs, context_feats, pre_enc_inds
+
+        # geo_dists = torch.stack(geo_dists, dim=0)
+        return context_locs, context_feats, pre_enc_inds, geo_dists, geo_valids
 
     def forward_decoder(
         self,
@@ -851,7 +757,7 @@ class SoftGroup(nn.Module):
 
         return dec_outputs
 
-    def forward_head(self, dec_outputs, mask_features_, locs_float_, box_preds_, queries_locs, batch_offsets_):
+    def forward_head(self, dec_outputs, mask_features_, locs_float_, box_preds_, queries_locs, batch_offsets_, geo_dists, geo_valids):
         (
             num_layers,
             n_queries,
@@ -905,15 +811,13 @@ class SoftGroup(nn.Module):
                 queries_locs_b = queries_locs[b]
                 queries_box_preds_b = queries_box_preds[b]
 
-                mask_logits = self.mask_heads_forward(
-                    mask_feature_b, weights, biases, n_queries, locs_float_b, box_preds_b, queries_locs_b, queries_box_preds_b
-                )
+                geo_dist_b, geo_valid_b = geo_dists[b], geo_valids[b]
 
-                mask_logits = mask_logits.squeeze(dim=0)  # (n_queries) x N_mask
+                mask_logits = self.mask_heads_forward(
+                    mask_feature_b, weights, biases, n_queries, locs_float_b, box_preds_b, queries_locs_b, queries_box_preds_b, geo_dist_b, geo_valid_b
+                )
                 mask_logits_list.append(mask_logits)
 
-            # output = {'cls_logits': cls_logits, 'mask_logits': mask_logits_list}
-            # outputs.append(output)
             cls_logits_layers.append(cls_logits)
             mask_logits_layers.append(mask_logits_list)
             conf_logits_layers.append(conf_logits)
@@ -935,19 +839,17 @@ class SoftGroup(nn.Module):
 
         for l in range(num_layers):
             if l < num_layers - 1:
-                weight_splits[l] = weight_splits[l].reshape(num_instances * out_channels, -1, 1)
-                bias_splits[l] = bias_splits[l].reshape(num_instances * out_channels)
+                weight_splits[l] = weight_splits[l].reshape(num_instances, out_channels, -1).permute(0,2,1)
+                bias_splits[l] = bias_splits[l].reshape(num_instances, out_channels)
             else:
-                weight_splits[l] = weight_splits[l].reshape(num_instances, -1, 1)
-                bias_splits[l] = bias_splits[l].reshape(num_instances)
+                weight_splits[l] = weight_splits[l].reshape(num_instances, out_channels, 1)
+                bias_splits[l] = bias_splits[l].reshape(num_instances, 1)
 
-        return weight_splits, bias_splits
+        return weight_splits, bias_splits # LIST OF [n_queries, C_in, C_out]
 
-    def mask_heads_forward(self, mask_features, weights, biases, num_insts, coords_, boxes_, queries_coords, queries_boxes):
+    def mask_heads_forward(self, mask_features, weights, biases, num_insts, coords_, boxes_, queries_coords, queries_boxes, geo_dist_b, geo_valid_b):
         assert mask_features.dim() == 3
         n_layers = len(weights)
-        c = mask_features.size(1)
-        n_mask = mask_features.size(0)
         x = mask_features.permute(2, 1, 0).repeat(num_insts, 1, 1)  ### num_inst * c * N_mask
 
         relative_coords = queries_coords.reshape(-1, 1, 3) - coords_.reshape(1, -1, 3)  ### N_inst * N_mask * 3
@@ -959,14 +861,25 @@ class SoftGroup(nn.Module):
         relative_boxes = torch.abs(queries_boxes_dim.reshape(-1, 1, 3) - boxes_dim.reshape(1, -1, 3))  ### N_inst * N_mask * 3
         relative_boxes = relative_boxes.permute(0, 2, 1)
 
-        x = torch.cat([relative_coords, relative_boxes, x], dim=1)  ### num_inst * (3+c) * N_mask
+        geo_dist_b[geo_valid_b==False] = -1
+        geo_dist_b[geo_valid_b==10000] = -1
+        max_geo_queries = torch.max(geo_dist_b, dim=1)[0]
+        max_geo = torch.max(max_geo_queries)
+        max_geo_queries[max_geo_queries==-1] = max_geo
+        max_geo_queries_repeat = max_geo_queries[:, None].repeat(1, geo_dist_b.shape[1])
+        geo_dist_b[geo_dist_b==-1] = max_geo_queries_repeat[geo_dist_b==-1]
 
-        x = x.reshape(1, -1, n_mask)  ### 1 * (num_inst*c') * Nmask
+
+        relative_geo = geo_dist_b[:, None, :]
+
+        x = torch.cat([relative_coords, relative_boxes, relative_geo, x], dim=1)  ### num_inst * (3+c) * N_mask
+
         for i, (w, b) in enumerate(zip(weights, biases)):
-            x = F.conv1d(x, w, bias=b, stride=1, padding=0, groups=num_insts)
+            x = torch.einsum("qab,qan->qbn", w, x) + b.unsqueeze(-1)
             if i < n_layers - 1:
                 x = F.relu(x)
 
+        x = x.squeeze(1)
         return x
 
     def get_instance(

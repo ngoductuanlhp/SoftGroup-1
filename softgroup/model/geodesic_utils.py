@@ -447,16 +447,6 @@ def cal_geodesic_vectorize3(
 def cal_geodesic_vectorize4(
     query_inds, locs_float_b, max_step=16, neighbor=64, radius=0.05, n_queries=192, max_dist=10000, n_sample=256
 ):
-
-    # batch_size = pre_enc_inds.shape[0]
-    # geo_dists = []
-    # for b in range(batch_size):
-    #     start = batch_offset_[b]
-    #     end = batch_offset_[b + 1]
-
-    # query_inds = pre_enc_inds[b][:n_queries].long()
-    # locs_float_b = locs_float_[start:end]
-
     query_inds = query_inds.long()
     n_points = locs_float_b.shape[0]
 
@@ -467,12 +457,6 @@ def cal_geodesic_vectorize4(
     # NOTE nearest neigbor is themself -> remove first element
     distances_arr = distances_arr[:, 1:]
     indices_arr = indices_arr[:, 1:].long()
-
-
-    # indices_arr_debug = torch.sum((distances_arr <= radius), dim=-1).float()
-    # print('debug knn', torch.mean(indices_arr_debug))
-    # indices_arr_debug = torch.sum((indices_arr >= 0), dim=-1).float()
-    # print('debug knn', torch.mean(indices_arr_debug))
 
     geo_dist = torch.zeros((n_queries, n_points), dtype=torch.float32, device=locs_float_b.device) + max_dist
     visited = torch.zeros((n_queries, n_points), dtype=torch.int, device=locs_float_b.device)
@@ -538,7 +522,4 @@ def cal_geodesic_vectorize4(
     geo_neighbors_inds[geo_neighbors_dist_queries_inds, geo_neighbors_dist_points_inds] = query_inds_repeat
     geo_neighbors_dist[geo_neighbors_dist_queries_inds, geo_neighbors_dist_points_inds] = 0
 
-    return geo_neighbors_dist, geo_neighbors_inds # n_queries, k
-    # return geo_dist
-    # geo_dists.append(geo_dist)
-    # return geo_dists
+    return geo_neighbors_dist, geo_neighbors_inds, geo_dist, visited  # n_queries, k
